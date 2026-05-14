@@ -41,7 +41,7 @@
 
 ## 使用方式
 
-可以直接使用项目中预编译好的二进制文件。把 `fvmx` 或 `fvmx.exe` 放到 `PATH` 中的任意目录后，确认命令可用：
+从 [GitHub Releases](../../releases/latest) 下载对应平台的二进制文件，放入 `PATH` 后即可使用：
 
 ```bash
 fvmx --help

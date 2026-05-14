@@ -41,7 +41,7 @@ Language: [简体中文](README.md) | English
 
 ## Usage
 
-You can use the prebuilt binary included with the project. Put `fvmx` or `fvmx.exe` in any directory on your `PATH`, then confirm it is available:
+Download the binary for your platform from [GitHub Releases](../../releases/latest), then put it in your `PATH`:
 
 ```bash
 fvmx --help
