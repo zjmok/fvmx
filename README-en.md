@@ -2,7 +2,7 @@
 
 Language: [简体中文](README.md) | English
 
-`fvmx` is a lightweight Flutter version manager written in Go. It uses bare Git repositories to share Git objects, Git worktrees to install multiple Flutter SDK versions, and keeps each version's `bin/cache` isolated.
+`fvmx` is a lightweight Flutter SDK version management CLI written in Go, powered by bare Git repos and worktrees for efficient multi-version management.
 
 ## Capability Comparison
 

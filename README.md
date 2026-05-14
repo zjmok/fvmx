@@ -2,11 +2,11 @@
 
 语言：简体中文 | [English](README-en.md)
 
-`fvmx` 是一个用 Go 实现的轻量 Flutter 版本管理 CLI：用裸仓库共享 Git objects，用 worktree 安装多个 Flutter SDK 版本，并让每个版本拥有独立的 `bin/cache`。
+`fvmx` 是一个用 Go 实现的轻量 Flutter SDK 版本管理 CLI，基于裸仓库 + worktree 架构实现多版本并行与高效存储。
 
 ## 能力对比
 
-| 能力 | fvmx | FVM |
+| 能力 | fvmx | fvm |
 | --- | --- | --- |
 | Git 存储 | ✅ 裸仓库 + worktree，共享 objects，避免为每个版本重复 clone Git 数据 | ⚠️ 使用缓存仓库 + SDK 目录，Git 数据有共享但目录结构更重 |
 | 多 repo 支持 | ✅ repo 是一等概念，原生支持 `origin` / `ohos` 等多个来源 | ⚠️ 支持自定义 fork / Flutter URL，但不是以多 repo 命名空间为核心 |
