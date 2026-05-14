@@ -32,10 +32,30 @@ func createSourceRepo(t *testing.T, root string) string {
 	git(t, repo, "config", "user.email", "test@example.com")
 	git(t, repo, "config", "user.name", "Test User")
 
-	if err := os.WriteFile(filepath.Join(repo, "bin", "flutter"), []byte("#!/usr/bin/env sh\necho fake flutter \"$@\"\n"), 0o755); err != nil {
+	flutterScript := `#!/usr/bin/env sh
+echo "Flutter 3.35.0 • channel unknown • unknown source"
+echo "Framework • revision abc123"
+echo "Tools • Dart 3.8.0 • DevTools 2.37.0"
+`
+	if err := os.WriteFile(filepath.Join(repo, "bin", "flutter"), []byte(flutterScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, "bin", "flutter.bat"), []byte("@echo off\r\necho fake flutter %*\r\n"), 0o755); err != nil {
+	flutterBatScript := `@echo off
+echo Flutter 3.35.0 - channel unknown - unknown source
+echo Framework - revision abc123
+echo Tools - Dart 3.8.0 - DevTools 2.37.0
+`
+	if err := os.WriteFile(filepath.Join(repo, "bin", "flutter.bat"), []byte(flutterBatScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "version"), []byte("3.35.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dartSdkDir := filepath.Join(repo, "bin", "cache", "dart-sdk")
+	if err := os.MkdirAll(dartSdkDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dartSdkDir, "version"), []byte("3.8.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -139,8 +159,8 @@ func TestPhaseOneFlow(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(versionPath, "bin", "flutter")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(versionPath, "bin", "cache")); !os.IsNotExist(err) {
-		t.Fatalf("bin/cache should not be created during install")
+	if _, err := os.Stat(filepath.Join(versionPath, "bin", "cache", "dart-sdk", "version")); err != nil {
+		t.Fatalf("dart-sdk version file should exist in worktree: %v", err)
 	}
 
 	listOutput, err := Run([]string{"list"}, Env{Home: home, Cwd: project})
@@ -149,9 +169,6 @@ func TestPhaseOneFlow(t *testing.T) {
 	}
 	if !strings.Contains(listOutput, versionID) {
 		t.Fatalf("list output should contain %s, got %s", versionID, listOutput)
-	}
-	if !strings.Contains(listOutput, versionPath) {
-		t.Fatalf("list output should contain %s, got %s", versionPath, listOutput)
 	}
 
 	useOutput, err := Run([]string{"use", "ohos@3.36"}, Env{Home: home, Cwd: project})
@@ -190,19 +207,19 @@ func TestPhaseOneFlow(t *testing.T) {
 	if !strings.Contains(listOutput, "Current project: "+versionID) {
 		t.Fatalf("list output should show current project version, got %s", listOutput)
 	}
-	if !strings.Contains(listOutput, "* "+versionID) {
-		t.Fatalf("list output should mark current version, got %s", listOutput)
+	if !strings.Contains(listOutput, "\033[32m*\033[0m") {
+		t.Fatalf("list output should have green marker, got %s", listOutput)
 	}
 
 	var flutterOutput bytes.Buffer
 	if _, err := Run([]string{"flutter", "--version"}, Env{Home: home, Cwd: project, Stdout: &flutterOutput}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(flutterOutput.String(), "fake flutter --version") {
+	if !strings.Contains(flutterOutput.String(), "Flutter 3.35.0") {
 		t.Fatalf("unexpected flutter output: %s", flutterOutput.String())
 	}
 
-	removeOutput, err := Run([]string{"remove", "ohos@3.36"}, Env{Home: home, Cwd: project})
+	removeOutput, err := Run([]string{"remove", "ohos@3.36"}, Env{Home: home, Cwd: project, Stdin: strings.NewReader("y\n")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,5 +286,279 @@ func TestRepoUpdateRequiresExistingRepo(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "repo does not exist: missing") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRemoveConfirmNo(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	sourceRepo := createSourceRepo(t, root)
+	Run([]string{"repo", "add", "ohos", sourceRepo}, Env{Home: home})
+	Run([]string{"install", "ohos", "3.35"}, Env{Home: home})
+
+	output, err := Run([]string{"remove", "ohos@3.35"}, Env{Home: home, Stdin: strings.NewReader("n\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != "Cancelled." {
+		t.Fatalf("expected Cancelled, got %s", output)
+	}
+	if _, err := os.Stat(filepath.Join(home, "versions", "ohos@3.35")); err != nil {
+		t.Fatalf("version should still exist after cancellation")
+	}
+}
+
+func TestRemoveConfirmYes(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	sourceRepo := createSourceRepo(t, root)
+	Run([]string{"repo", "add", "ohos", sourceRepo}, Env{Home: home})
+	Run([]string{"install", "ohos", "3.35"}, Env{Home: home})
+
+	output, err := Run([]string{"remove", "ohos@3.35"}, Env{Home: home, Stdin: strings.NewReader("y\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "Removed ohos@3.35") {
+		t.Fatalf("expected removed message, got %s", output)
+	}
+}
+
+func TestRepoRemoveWithVersionsFails(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	sourceRepo := createSourceRepo(t, root)
+	Run([]string{"repo", "add", "ohos", sourceRepo}, Env{Home: home})
+	Run([]string{"install", "ohos", "3.35"}, Env{Home: home})
+
+	_, err := Run([]string{"repo", "remove", "ohos"}, Env{Home: home})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "still installed") {
+		t.Fatalf("expected 'still installed' error, got %v", err)
+	}
+}
+
+func TestRepoRemoveSuccess(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	sourceRepo := createSourceRepo(t, root)
+	Run([]string{"repo", "add", "ohos", sourceRepo}, Env{Home: home})
+
+	output, err := Run([]string{"repo", "remove", "ohos"}, Env{Home: home, Stdin: strings.NewReader("y\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "Removed repo: ohos") {
+		t.Fatalf("expected removed repo message, got %s", output)
+	}
+	if _, err := os.Stat(filepath.Join(home, "repos", "ohos.git")); !os.IsNotExist(err) {
+		t.Fatalf("bare repo should be removed")
+	}
+}
+
+func TestAliasAddListRemove(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	sourceRepo := createSourceRepo(t, root)
+	Run([]string{"repo", "add", "ohos", sourceRepo}, Env{Home: home})
+	Run([]string{"install", "ohos", "3.35"}, Env{Home: home})
+
+	addOutput, err := Run([]string{"alias", "add", "ohos_3_35", "ohos@3.35"}, Env{Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(addOutput, "Added alias ohos_3_35") {
+		t.Fatalf("unexpected alias add output: %s", addOutput)
+	}
+
+	listOutput, err := Run([]string{"alias", "list"}, Env{Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listOutput, "ohos_3_35") {
+		t.Fatalf("alias list output should contain alias name, got %s", listOutput)
+	}
+	if !strings.Contains(listOutput, "ohos@3.35") {
+		t.Fatalf("alias list output should contain target, got %s", listOutput)
+	}
+
+	rmOutput, err := Run([]string{"alias", "remove", "ohos_3_35"}, Env{Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rmOutput != "Removed alias: ohos_3_35" {
+		t.Fatalf("unexpected alias remove output: %s", rmOutput)
+	}
+
+	listOutput, err = Run([]string{"alias", "list"}, Env{Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listOutput != "No aliases configured." {
+		t.Fatalf("expected no aliases, got %s", listOutput)
+	}
+}
+
+func TestAliasUse(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	project := filepath.Join(root, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceRepo := createSourceRepo(t, root)
+	Run([]string{"repo", "add", "ohos", sourceRepo}, Env{Home: home})
+	Run([]string{"install", "ohos", "3.35"}, Env{Home: home})
+	Run([]string{"alias", "add", "ohos_3_35", "ohos@3.35"}, Env{Home: home})
+
+	useOutput, err := Run([]string{"use", "ohos_3_35"}, Env{Home: home, Cwd: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(useOutput, "Using ohos@3.35") {
+		t.Fatalf("unexpected use output: %s", useOutput)
+	}
+}
+
+func TestListShowsAliasesColumn(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	project := filepath.Join(root, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceRepo := createSourceRepo(t, root)
+	Run([]string{"repo", "add", "ohos", sourceRepo}, Env{Home: home})
+	Run([]string{"install", "ohos", "3.35"}, Env{Home: home})
+	Run([]string{"alias", "add", "ohos_3_35", "ohos@3.35"}, Env{Home: home})
+
+	listOutput, err := Run([]string{"list"}, Env{Home: home, Cwd: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listOutput, "Flutter") {
+		t.Fatalf("list should have Flutter column header, got: %s", listOutput)
+	}
+	if !strings.Contains(listOutput, "Dart") {
+		t.Fatalf("list should have Dart column header, got: %s", listOutput)
+	}
+	if !strings.Contains(listOutput, "Aliases") {
+		t.Fatalf("list should have Aliases column header, got: %s", listOutput)
+	}
+	if !strings.Contains(listOutput, "ohos_3_35") {
+		t.Fatalf("list should show alias name in row, got: %s", listOutput)
+	}
+	if !strings.Contains(listOutput, "ohos@3.35") {
+		t.Fatalf("list should show version ID, got: %s", listOutput)
+	}
+	if !strings.Contains(listOutput, "3.35.0") {
+		t.Fatalf("list should show Flutter version 3.35.0, got: %s", listOutput)
+	}
+	if !strings.Contains(listOutput, "3.8.0") {
+		t.Fatalf("list should show Dart version 3.8.0, got: %s", listOutput)
+	}
+}
+
+func TestAliasRemoveViaRemove(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	sourceRepo := createSourceRepo(t, root)
+	Run([]string{"repo", "add", "ohos", sourceRepo}, Env{Home: home})
+	Run([]string{"install", "ohos", "3.35"}, Env{Home: home})
+	Run([]string{"alias", "add", "ohos_3_35", "ohos@3.35"}, Env{Home: home})
+
+	output, err := Run([]string{"remove", "ohos_3_35"}, Env{Home: home, Stdin: strings.NewReader("y\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "Removed ohos@3.35") {
+		t.Fatalf("expected removed message, got %s", output)
+	}
+}
+
+func TestAliasAddNonExistentVersion(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	sourceRepo := createSourceRepo(t, root)
+	Run([]string{"repo", "add", "ohos", sourceRepo}, Env{Home: home})
+
+	_, err := Run([]string{"alias", "add", "myalias", "ohos@9.99"}, Env{Home: home})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "is not installed") {
+		t.Fatalf("expected 'not installed' error, got %v", err)
+	}
+}
+
+func TestStepLoggingOnInstall(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	sourceRepo := createSourceRepo(t, root)
+	Run([]string{"repo", "add", "ohos", sourceRepo}, Env{Home: home})
+
+	var stdout bytes.Buffer
+	result, err := Run([]string{"install", "ohos", "3.35"}, Env{Home: home, Stdout: &stdout, Stdin: strings.NewReader("y\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := stdout.String()
+	if !strings.Contains(logs, "Fetching repo ohos...") {
+		t.Fatalf("expected step log 'Fetching repo ohos...', got %s", logs)
+	}
+	if !strings.Contains(logs, "Resolving ref 3.35...") {
+		t.Fatalf("expected step log 'Resolving ref 3.35...', got %s", logs)
+	}
+	if !strings.Contains(logs, "Creating worktree ohos@3.35...") {
+		t.Fatalf("expected step log 'Creating worktree ohos@3.35...', got %s", logs)
+	}
+	if !strings.Contains(result, "Installed ohos@3.35") {
+		t.Fatalf("expected 'Installed' in result, got %s", result)
+	}
+}
+
+func TestRepoRemoveNonexistent(t *testing.T) {
+	_, err := Run([]string{"repo", "remove", "missing"}, Env{Home: filepath.Join(t.TempDir(), "home")})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "repo does not exist: missing") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseFlutterVersionOutput(t *testing.T) {
+	output := `Flutter 3.7.12-ohos-1.1.7 • channel unknown • unknown source
+Framework • revision abc123
+Tools • Dart 2.19.6 • DevTools 2.20.0`
+	fv, dv := parseFlutterVersionOutput(output)
+	if fv != "3.7.12-ohos-1.1.7" {
+		t.Fatalf("expected flutter 3.7.12-ohos-1.1.7, got %s", fv)
+	}
+	if dv != "2.19.6" {
+		t.Fatalf("expected dart 2.19.6, got %s", dv)
+	}
+
+	output2 := `Flutter 3.41.9 • channel stable • https://github.com/flutter/flutter.git
+Framework • revision xyz789
+Tools • Dart 3.11.5 • DevTools 2.41.0`
+	fv2, dv2 := parseFlutterVersionOutput(output2)
+	if fv2 != "3.41.9" {
+		t.Fatalf("expected flutter 3.41.9, got %s", fv2)
+	}
+	if dv2 != "3.11.5" {
+		t.Fatalf("expected dart 3.11.5, got %s", dv2)
+	}
+
+	output3 := `Flutter 3.35.0 - channel unknown
+Tools - Dart 3.8.0 - DevTools 2.37.0`
+	fv3, dv3 := parseFlutterVersionOutput(output3)
+	if fv3 != "3.35.0" {
+		t.Fatalf("expected flutter 3.35.0, got %s", fv3)
+	}
+	if dv3 != "3.8.0" {
+		t.Fatalf("expected dart 3.8.0, got %s", dv3)
 	}
 }

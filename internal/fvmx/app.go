@@ -1,6 +1,7 @@
 package fvmx
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"text/tabwriter"
 )
 
 const configFile = "config.json"
@@ -38,8 +40,23 @@ type Env struct {
 	Stderr io.Writer
 }
 
+func confirm(env Env, prompt string) bool {
+	fmt.Fprint(env.Stdout, prompt)
+	scanner := bufio.NewScanner(env.Stdin)
+	if !scanner.Scan() {
+		return false
+	}
+	response := strings.TrimSpace(scanner.Text())
+	return response == "y" || response == "Y"
+}
+
+func logStep(env Env, message string) {
+	fmt.Fprintln(env.Stdout, message)
+}
+
 type config struct {
-	Repos map[string]string `json:"repos"`
+	Repos   map[string]string `json:"repos"`
+	Aliases map[string]string `json:"aliases"`
 }
 
 type projectConfig struct {
@@ -83,20 +100,20 @@ func Run(args []string, env Env) (string, error) {
 
 	switch args[0] {
 	case "repo":
-		return repoCommand(env.Home, args[1:])
+		return repoCommand(env.Home, args[1:], env)
 	case "install":
 		if len(args) != 3 {
 			return "", usageError("install requires <repo> and <ref>.")
 		}
-		return install(env.Home, args[1], args[2])
+		return install(env.Home, args[1], args[2], env)
 	case "list":
 		if len(args) != 1 {
 			return "", usageError("list does not accept arguments.")
 		}
-		return listVersions(env.Home, env.Cwd)
+		return listVersions(env.Home, env.Cwd, env)
 	case "use":
 		if len(args) != 2 {
-			return "", usageError("use requires <repo@ref>.")
+			return "", usageError("use requires <repo@ref-or-alias>.")
 		}
 		return useVersion(env.Home, args[1], env.Cwd)
 	case "flutter":
@@ -106,9 +123,11 @@ func Run(args []string, env Env) (string, error) {
 		return "", nil
 	case "remove":
 		if len(args) != 2 {
-			return "", usageError("remove requires <repo@ref>.")
+			return "", usageError("remove requires <repo@ref-or-alias>.")
 		}
-		return removeVersion(env.Home, args[1])
+		return removeVersion(env.Home, args[1], env)
+	case "alias":
+		return aliasCommand(env.Home, args[1:])
 	default:
 		return "", usageError(fmt.Sprintf("unknown command: %s", args[0]))
 	}
@@ -120,11 +139,15 @@ func usage() string {
   fvmx repo set <name> <url>
   fvmx repo list
   fvmx repo update [name]
+  fvmx repo remove <name>
   fvmx install <repo> <ref>
   fvmx list
-  fvmx use <repo@ref>
+  fvmx use <repo@ref-or-alias>
+  fvmx remove <repo@ref-or-alias>
+  fvmx alias add <alias> <repo@ref>
+  fvmx alias list
+  fvmx alias remove <alias>
   fvmx flutter [args...]
-  fvmx remove <repo@ref>
 
 Environment:
   FVMX_HOME  Override the storage directory (default: ~/.fvmx)`
@@ -178,6 +201,9 @@ func readConfig(home string) (config, error) {
 	}
 	if cfg.Repos == nil {
 		cfg.Repos = map[string]string{}
+	}
+	if cfg.Aliases == nil {
+		cfg.Aliases = map[string]string{}
 	}
 	return cfg, nil
 }
@@ -267,6 +293,20 @@ func versionLabel(ref string, commit string) string {
 	return label
 }
 
+func resolveVersionOrAlias(home, input string) (installedVersion, error) {
+	if strings.Contains(input, "@") {
+		return findInstalledVersion(home, input)
+	}
+	cfg, err := readConfig(home)
+	if err != nil {
+		return installedVersion{}, err
+	}
+	if target, ok := cfg.Aliases[input]; ok {
+		return findInstalledVersion(home, target)
+	}
+	return installedVersion{}, &ExitError{Message: "unknown version or alias: " + input, Code: 1}
+}
+
 func findInstalledVersion(home, spec string) (installedVersion, error) {
 	parsed, err := parseVersionSpec(spec)
 	if err != nil {
@@ -305,7 +345,7 @@ func findInstalledVersion(home, spec string) (installedVersion, error) {
 	return installedVersion{ID: matches[0], Path: filepath.Join(versionsDir(home), matches[0])}, nil
 }
 
-func repoCommand(home string, args []string) (string, error) {
+func repoCommand(home string, args []string, env Env) (string, error) {
 	if len(args) == 0 {
 		return "", usageError("repo requires a subcommand.")
 	}
@@ -315,7 +355,7 @@ func repoCommand(home string, args []string) (string, error) {
 		if len(args) != 3 {
 			return "", usageError("repo add requires <name> and <url>.")
 		}
-		return repoAdd(home, args[1], args[2])
+		return repoAdd(home, args[1], args[2], env)
 	case "set":
 		if len(args) != 3 {
 			return "", usageError("repo set requires <name> and <url>.")
@@ -334,13 +374,18 @@ func repoCommand(home string, args []string) (string, error) {
 		if len(args) == 2 {
 			name = args[1]
 		}
-		return repoUpdate(home, name)
+		return repoUpdate(home, name, env)
+	case "remove":
+		if len(args) != 2 {
+			return "", usageError("repo remove requires <name>.")
+		}
+		return repoRemove(home, args[1], env)
 	default:
 		return "", usageError("unknown repo command: " + args[0])
 	}
 }
 
-func repoAdd(home, name, url string) (string, error) {
+func repoAdd(home, name, url string, env Env) (string, error) {
 	if err := assertRepoName(name); err != nil {
 		return "", err
 	}
@@ -361,10 +406,12 @@ func repoAdd(home, name, url string) (string, error) {
 		return "", &ExitError{Message: "repo already exists: " + name, Code: 1}
 	}
 
+	logStep(env, "Cloning bare repo "+name+"...")
 	if _, err := runGit("clone", "--bare", url, target); err != nil {
 		return "", err
 	}
 
+	logStep(env, "Writing config...")
 	cfg.Repos[name] = url
 	if err := writeConfig(home, cfg); err != nil {
 		return "", err
@@ -430,7 +477,51 @@ func repoList(home string) (string, error) {
 	return builder.String(), nil
 }
 
-func repoUpdate(home, name string) (string, error) {
+func repoRemove(home, name string, env Env) (string, error) {
+	if err := assertRepoName(name); err != nil {
+		return "", err
+	}
+
+	cfg, err := readConfig(home)
+	if err != nil {
+		return "", err
+	}
+	if _, exists := cfg.Repos[name]; !exists {
+		return "", &ExitError{Message: "repo does not exist: " + name, Code: 1}
+	}
+
+	entries, err := os.ReadDir(versionsDir(home))
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() && strings.HasPrefix(entry.Name(), name+"@") {
+				return "", &ExitError{
+					Message: fmt.Sprintf("cannot remove repo %s: version %s is still installed. Remove it first with: fvmx remove %s", name, entry.Name(), entry.Name()),
+					Code:    1,
+				}
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
+	if !confirm(env, fmt.Sprintf("Remove repo %s? Type y to confirm:", name)) {
+		return "Cancelled.", nil
+	}
+
+	repo := repoPath(home, name)
+	if err := os.RemoveAll(repo); err != nil {
+		return "", err
+	}
+
+	delete(cfg.Repos, name)
+	if err := writeConfig(home, cfg); err != nil {
+		return "", err
+	}
+
+	return "Removed repo: " + name, nil
+}
+
+func repoUpdate(home, name string, env Env) (string, error) {
 	cfg, err := readConfig(home)
 	if err != nil {
 		return "", err
@@ -443,6 +534,7 @@ func repoUpdate(home, name string) (string, error) {
 		if _, exists := cfg.Repos[name]; !exists {
 			return "", &ExitError{Message: "repo does not exist: " + name, Code: 1}
 		}
+		logStep(env, "Fetching repo "+name+"...")
 		if err := repoFetch(home, name); err != nil {
 			return "", err
 		}
@@ -460,6 +552,7 @@ func repoUpdate(home, name string) (string, error) {
 	sort.Strings(names)
 
 	for _, repoName := range names {
+		logStep(env, "Fetching repo "+repoName+"...")
 		if err := repoFetch(home, repoName); err != nil {
 			return "", err
 		}
@@ -477,7 +570,7 @@ func repoFetch(home, name string) error {
 	return err
 }
 
-func install(home, name, ref string) (string, error) {
+func install(home, name, ref string, env Env) (string, error) {
 	if err := assertRepoName(name); err != nil {
 		return "", err
 	}
@@ -493,11 +586,13 @@ func install(home, name, ref string) (string, error) {
 		return "", &ExitError{Message: fmt.Sprintf("unknown repo: %s. Add it first with: fvmx repo add %s <url>", name, name), Code: 1}
 	}
 
+	logStep(env, "Fetching repo "+name+"...")
 	if err := repoFetch(home, name); err != nil {
 		return "", err
 	}
 
 	repo := repoPath(home, name)
+	logStep(env, "Resolving ref "+ref+"...")
 	commit, err := resolveCommit(repo, ref)
 	if err != nil {
 		return "", err
@@ -509,6 +604,7 @@ func install(home, name, ref string) (string, error) {
 		return fmt.Sprintf("Version already installed: %s\n%s", id, target), nil
 	}
 
+	logStep(env, "Creating worktree "+id+"...")
 	if _, err := runGit("--git-dir", repo, "worktree", "add", target, commit); err != nil {
 		return "", err
 	}
@@ -516,7 +612,7 @@ func install(home, name, ref string) (string, error) {
 	return fmt.Sprintf("Installed %s\n%s", id, target), nil
 }
 
-func listVersions(home, projectDir string) (string, error) {
+func listVersions(home, projectDir string, env Env) (string, error) {
 	entries, err := os.ReadDir(versionsDir(home))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -538,25 +634,120 @@ func listVersions(home, projectDir string) (string, error) {
 
 	sort.Strings(versions)
 	current := currentProjectVersion(projectDir, versions)
-	var builder strings.Builder
+
+	cfg, err := readConfig(home)
+	if err != nil {
+		return "", err
+	}
+	aliasMap := map[string][]string{}
+	for alias, target := range cfg.Aliases {
+		aliasMap[target] = append(aliasMap[target], alias)
+	}
+	for target := range aliasMap {
+		sort.Strings(aliasMap[target])
+	}
+
+	var buf bytes.Buffer
+	tw := tabwriter.NewWriter(&buf, 0, 0, 3, ' ', 0)
+
 	if current != "" {
-		builder.WriteString("Current project: ")
-		builder.WriteString(current)
-		builder.WriteString("\n")
+		fmt.Fprintf(tw, "Current project: %s\n", current)
 	}
-	builder.WriteString("Installed versions:")
+	fmt.Fprintln(tw, "   Version\tFlutter\tDart\tAliases")
 	for _, version := range versions {
-		builder.WriteString("\n  ")
+		marker := "  "
 		if version == current {
-			builder.WriteString("* ")
-		} else {
-			builder.WriteString("  ")
+			marker = " *"
 		}
-		builder.WriteString(version)
-		builder.WriteString("  ")
-		builder.WriteString(filepath.Join(versionsDir(home), version))
+		versionPath := filepath.Join(versionsDir(home), version)
+		flutterVer, dartVer := getSDKVersionInfo(versionPath)
+		aliases := "-"
+		if als, ok := aliasMap[version]; ok && len(als) > 0 {
+			aliases = strings.Join(als, ", ")
+		}
+		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\n", marker, version, flutterVer, dartVer, aliases)
 	}
-	return builder.String(), nil
+	tw.Flush()
+	return strings.Replace(buf.String(), " * ", " \033[32m*\033[0m ", 1), nil
+}
+
+func getSDKVersionInfo(sdkPath string) (flutterVer, dartVer string) {
+	if content, err := os.ReadFile(filepath.Join(sdkPath, "version")); err == nil {
+		flutterVer = strings.TrimSpace(string(content))
+	}
+	if content, err := os.ReadFile(filepath.Join(sdkPath, "bin", "cache", "dart-sdk", "version")); err == nil {
+		dartVer = strings.TrimSpace(string(content))
+	}
+	if flutterVer != "" && dartVer != "" {
+		return
+	}
+
+	toolPath, err := flutterExecutable(sdkPath)
+	if err != nil {
+		if flutterVer == "" {
+			flutterVer = "-"
+		}
+		if dartVer == "" {
+			dartVer = "-"
+		}
+		return
+	}
+
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" && strings.HasSuffix(strings.ToLower(toolPath), ".bat") {
+		cmd = exec.Command("cmd", "/c", toolPath, "--version")
+	} else {
+		cmd = exec.Command(toolPath, "--version")
+	}
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		if flutterVer == "" {
+			flutterVer = "-"
+		}
+		if dartVer == "" {
+			dartVer = "-"
+		}
+		return
+	}
+
+	fv, dv := parseFlutterVersionOutput(stdout.String())
+	if flutterVer == "" && fv != "" {
+		flutterVer = fv
+	}
+	if dartVer == "" && dv != "" {
+		dartVer = dv
+	}
+	if flutterVer == "" {
+		flutterVer = "-"
+	}
+	if dartVer == "" {
+		dartVer = "-"
+	}
+	return
+}
+
+func parseFlutterVersionOutput(output string) (flutterVer, dartVer string) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if flutterVer == "" && strings.HasPrefix(line, "Flutter ") {
+			if parts := strings.Fields(line); len(parts) >= 2 {
+				flutterVer = parts[1]
+			}
+		}
+		if dartVer == "" && strings.Contains(line, "Dart ") {
+			if idx := strings.Index(line, "Dart "); idx >= 0 {
+				rest := line[idx+5:]
+				if parts := strings.Fields(rest); len(parts) >= 1 {
+					dartVer = parts[0]
+				}
+			}
+		}
+		if flutterVer != "" && dartVer != "" {
+			break
+		}
+	}
+	return
 }
 
 func currentProjectVersion(projectDir string, installed []string) string {
@@ -594,7 +785,7 @@ func currentProjectVersion(projectDir string, installed []string) string {
 }
 
 func useVersion(home, spec, projectDir string) (string, error) {
-	version, err := findInstalledVersion(home, spec)
+	version, err := resolveVersionOrAlias(home, spec)
 	if err != nil {
 		return "", err
 	}
@@ -725,13 +916,17 @@ func createDirLink(target, linkPath string) error {
 	return nil
 }
 
-func removeVersion(home, spec string) (string, error) {
-	parsed, err := parseVersionSpec(spec)
+func removeVersion(home, spec string, env Env) (string, error) {
+	version, err := resolveVersionOrAlias(home, spec)
 	if err != nil {
 		return "", err
 	}
 
-	version, err := findInstalledVersion(home, spec)
+	if !confirm(env, fmt.Sprintf("Remove version %s? Type y to confirm:", version.ID)) {
+		return "Cancelled.", nil
+	}
+
+	parsed, err := parseVersionSpec(version.ID)
 	if err != nil {
 		return "", err
 	}
@@ -741,4 +936,100 @@ func removeVersion(home, spec string) (string, error) {
 	}
 
 	return "Removed " + version.ID, nil
+}
+
+func aliasCommand(home string, args []string) (string, error) {
+	if len(args) == 0 {
+		return "", usageError("alias requires a subcommand.")
+	}
+	switch args[0] {
+	case "add":
+		if len(args) != 3 {
+			return "", usageError("alias add requires <alias> and <repo@ref>.")
+		}
+		return aliasAdd(home, args[1], args[2])
+	case "list":
+		if len(args) != 1 {
+			return "", usageError("alias list does not accept arguments.")
+		}
+		return aliasList(home)
+	case "remove":
+		if len(args) != 2 {
+			return "", usageError("alias remove requires <alias>.")
+		}
+		return aliasRemove(home, args[1])
+	default:
+		return "", usageError("unknown alias command: " + args[0])
+	}
+}
+
+func aliasAdd(home, alias, target string) (string, error) {
+	if !repoNamePattern.MatchString(alias) {
+		return "", &ExitError{
+			Message: "alias may only contain letters, numbers, dots, underscores, and hyphens",
+			Code:    1,
+		}
+	}
+
+	version, err := findInstalledVersion(home, target)
+	if err != nil {
+		return "", err
+	}
+
+	cfg, err := readConfig(home)
+	if err != nil {
+		return "", err
+	}
+
+	cfg.Aliases[alias] = version.ID
+	if err := writeConfig(home, cfg); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("Added alias %s -> %s", alias, version.ID), nil
+}
+
+func aliasList(home string) (string, error) {
+	cfg, err := readConfig(home)
+	if err != nil {
+		return "", err
+	}
+
+	if len(cfg.Aliases) == 0 {
+		return "No aliases configured.", nil
+	}
+
+	names := make([]string, 0, len(cfg.Aliases))
+	for name := range cfg.Aliases {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var builder strings.Builder
+	builder.WriteString("Configured aliases:")
+	for _, name := range names {
+		builder.WriteString("\n  ")
+		builder.WriteString(name)
+		builder.WriteString("  ")
+		builder.WriteString(cfg.Aliases[name])
+	}
+	return builder.String(), nil
+}
+
+func aliasRemove(home, alias string) (string, error) {
+	cfg, err := readConfig(home)
+	if err != nil {
+		return "", err
+	}
+
+	if _, exists := cfg.Aliases[alias]; !exists {
+		return "", &ExitError{Message: "alias does not exist: " + alias, Code: 1}
+	}
+
+	delete(cfg.Aliases, alias)
+	if err := writeConfig(home, cfg); err != nil {
+		return "", err
+	}
+
+	return "Removed alias: " + alias, nil
 }
