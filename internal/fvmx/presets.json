@@ -1,0 +1,6 @@
+{
+  "presets": [
+    {"name": "origin", "url": "https://github.com/flutter/flutter.git", "description": "Official Flutter SDK"},
+    {"name": "ohos", "url": "https://gitcode.com/openharmony-tpc/flutter_flutter.git", "description": "OpenHarmony Flutter SDK"}
+  ]
+}

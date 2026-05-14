@@ -20,24 +20,24 @@ Language: [简体中文](README.md) | English
 | Cross-platform Stability | ⚠️ More edge cases (especially Windows) | ✅ More mature and stable |
 | Ecosystem | ❌ New tool | ✅ Mature ecosystem |
 
-## Progress
+## Features
 
-- [x] `fvmx repo add <name> <url>`: clone a bare repository into `~/.fvmx/repos/<name>.git` and write it to `config.json`
-- [x] `fvmx repo set <name> <url>`: change the source URL for an existing repo and update the bare repository remote
-- [x] `fvmx repo list`: list configured repo names and source URLs
-- [x] `fvmx repo update [name]`: update one configured bare repository, or all of them
-- [x] `fvmx repo remove <name>`: delete a bare repository and remove from config; rejects if versions are still installed
-- [x] `fvmx install <repo> <ref>`: fetch the bare repository, resolve a commit / branch / tag, then create a `~/.fvmx/versions/<repo>@<ref>` worktree
-- [x] `fvmx list`: list installed SDK versions and mark the version used by the current project
-- [x] `fvmx use <repo@ref-or-alias>`: create `.fvmx/flutter_sdk` in the current project, then write `.fvmx/version` and `.fvmxrc`; supports alias
-- [x] `fvmx flutter [args...]`: forward commands to the current project's `.fvmx/flutter_sdk/bin/flutter`
-- [x] `fvmx remove <repo@ref-or-alias>`: remove an installed version with `git worktree remove`; prompts for confirmation; supports alias
-- [x] `fvmx alias add <alias> <repo@ref>`: create a global alias pointing to an installed version
-- [x] `fvmx alias list`: list all global aliases
-- [x] `fvmx alias remove <alias>`: remove a global alias
-- [x] Deletion confirmation: `remove` and `repo remove` require `y/Y` before proceeding
-- [x] Step logging: `repo add`, `repo update`, `install` output progress steps
-- [x] Test coverage: confirmation, step logging, full alias workflow
+- `fvmx repo init`: interactively add preset repos (origin / ohos) from embedded presets.json
+- `fvmx repo add <name> <url>`: clone a bare repository into `~/.fvmx/repos/<name>.git` and write it to `config.json`
+- `fvmx repo set <name> <url>`: change the source URL for an existing repo and update the bare repository remote
+- `fvmx repo list`: list configured repo names and source URLs
+- `fvmx repo update [name]`: update one configured bare repository, or all of them
+- `fvmx repo remove <name>`: delete a bare repository and remove from config; rejects if versions are still installed
+- `fvmx install <repo> <ref>`: fetch the bare repository, resolve a commit / branch / tag, then create a `~/.fvmx/versions/<repo>@<ref>` worktree
+- `fvmx list`: list installed SDK versions with Flutter/Dart version columns, mark the current project version
+- `fvmx use <repo@ref-or-alias>`: create `.fvmx/flutter_sdk` in the current project, then write `.fvmx/version` and `.fvmxrc`; supports alias
+- `fvmx flutter [args...]`: resolve the installed SDK from `.fvmxrc` and execute `bin/flutter`
+- `fvmx dart [args...]`: resolve the installed SDK from `.fvmxrc` and execute `bin/dart`
+- `fvmx remove <repo@ref-or-alias>`: remove an installed version with `git worktree remove`; prompts for confirmation; supports alias
+- `fvmx alias add <alias> <repo@ref>`: create a global alias pointing to an installed version
+- `fvmx alias list`: list all global aliases
+- `fvmx alias remove <alias>`: remove a global alias
+- `fvmx releases <repo> [channel]`: list available releases (official repos fetch from Google Storage, others use git ls-remote)
 
 ## Usage
 
@@ -50,19 +50,24 @@ fvmx --help
 Common commands:
 
 ```bash
+fvmx repo init                           # interactively add preset repos
 fvmx repo add ohos <url>
 fvmx repo set ohos <new-url>
 fvmx repo list
 fvmx repo update ohos
 fvmx repo remove ohos
 fvmx install ohos 3.35
-fvmx list
+fvmx list                                # table with Flutter/Dart version, aliases
 fvmx use ohos@3.35
 fvmx flutter --version
+fvmx dart --version                      # Dart command forwarding
 fvmx remove ohos@3.35
 fvmx alias add ohos_3_35 ohos@3.35
 fvmx alias list
 fvmx alias remove ohos_3_35
+fvmx releases origin                     # official stable releases
+fvmx releases origin beta                # official beta releases
+fvmx releases ohos                       # non-official repo tags/branches
 ```
 
 ## Development
@@ -127,13 +132,16 @@ project/
 ohos@3.35
 ```
 
-`.fvmxrc` stores a concise Flutter-version-oriented config:
+`.fvmxrc` stores the Flutter SDK version configuration:
 
 ```json
 {
-  "flutter": "3.35"
+  "flutter": "3.35",
+  "repo": "ohos"
 }
 ```
+
+The `repo` field is optional and enables exact version matching, avoiding ambiguity when multiple repos share the same version number.
 
 ## Design Notes
 
@@ -141,14 +149,18 @@ ohos@3.35
 - Version directories use `<repo>@<ref>`, for example `ohos@3.35`; `install` still resolves the ref to a concrete commit before creating the worktree.
 - If a ref contains path separators or other characters unsuitable for directory names, they are normalized to `-`.
 - `install` only creates a worktree. It does not share or symlink `bin/cache`, so each Flutter SDK version keeps its own cache.
-- `fvmx list` first reads the current project's `.fvmx/version` to mark the active version. If that file does not exist, it tries to infer the version from the `flutter` field in `.fvmxrc`.
+- `fvmx` commands only read `.fvmxrc` (the project root config file), never `.fvmx/` directly. The `.fvmx/` directory (containing `flutter_sdk` symlink and `version`) is created by `fvmx use` for IDE / script / CI use.
+- `fvmx list`, `fvmx flutter`, and `fvmx dart` share the same resolution logic: ① read `.fvmxrc` → with `repo` + `flutter` for exact installed version match ② with only `flutter`, scan `versions/` for a unique suffix match. `fvmx list` then maps the SDK path back to a version ID.
 - On Windows, `.fvmx/flutter_sdk` uses a directory junction to avoid requiring elevated privileges for normal directory symlinks.
-- `fvmx flutter ...` reads the current project's `.fvmx/flutter_sdk` and executes its `bin/flutter`; on Windows it prefers `bin/flutter.bat`.
-- `remove` and `repo remove` prompt with `Type y to confirm:` and only proceed on `y`/`Y` input. `repo remove` blocks deletion if any version from that repo is still installed.
+- `remove` and `repo remove` prompt with `(y/N)` and only proceed on `y`/`Y` input. `repo remove` blocks deletion if any version from that repo is still installed.
 - Aliases are stored globally in `~/.fvmx/config.json` under the `aliases` key. They can only point to already-installed versions and are resolved by `use` and `remove` commands.
 - `repo add`, `repo update`, and `install` output step logs (e.g. `Cloning bare repo...`, `Fetching repo...`, `Resolving ref...`) for visibility during long-running operations.
+- `repo init` uses an embedded `presets.json` to offer official and ohos presets interactively. Already-configured repos are updated via `repo set`, new repos are added via `repo add`.
+- `releases` fetches the release list from Google Storage's `releases_<platform>.json` for official repos (`github.com/flutter/flutter`), with channel defaulting to `stable`. For non-official repos, it uses `git ls-remote` to list tags and branches.
 
-## Later Phases
+## Roadmap
 
-- Phase 2: lazy cache, status
-- Phase 3: GC, CI support, shared cache for multiple users
+- **doctor** — SDK health diagnostics: path integrity, binary executability, version consistency
+- **GC** — Clean up unreferenced bare repo objects and stale worktrees
+- **CI support** — Non-interactive mode, auto `.fvmxrc` → install → use
+- **Shell completion** — Dynamic completion for commands, repo names, versions, aliases

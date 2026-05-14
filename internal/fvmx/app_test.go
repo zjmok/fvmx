@@ -48,6 +48,18 @@ echo Tools - Dart 3.8.0 - DevTools 2.37.0
 	if err := os.WriteFile(filepath.Join(repo, "bin", "flutter.bat"), []byte(flutterBatScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	dartScript := `#!/usr/bin/env sh
+echo "fake dart $@"
+`
+	if err := os.WriteFile(filepath.Join(repo, "bin", "dart"), []byte(dartScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dartBatScript := `@echo off
+echo fake dart %*
+`
+	if err := os.WriteFile(filepath.Join(repo, "bin", "dart.bat"), []byte(dartBatScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(repo, "version"), []byte("3.35.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +183,7 @@ func TestPhaseOneFlow(t *testing.T) {
 		t.Fatalf("list output should contain %s, got %s", versionID, listOutput)
 	}
 
-	useOutput, err := Run([]string{"use", "ohos@3.36"}, Env{Home: home, Cwd: project})
+	useOutput, err := Run([]string{"use", "ohos@3.36"}, Env{Home: home, Cwd: project, Stdin: strings.NewReader("y\n")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,6 +211,9 @@ func TestPhaseOneFlow(t *testing.T) {
 	if !strings.Contains(string(rcFile), `"flutter": "3.36"`) {
 		t.Fatalf("unexpected .fvmxrc: %s", rcFile)
 	}
+	if !strings.Contains(string(rcFile), `"repo": "ohos"`) {
+		t.Fatalf("expected repo field in .fvmxrc, got %s", rcFile)
+	}
 
 	listOutput, err = Run([]string{"list"}, Env{Home: home, Cwd: project})
 	if err != nil {
@@ -217,6 +232,14 @@ func TestPhaseOneFlow(t *testing.T) {
 	}
 	if !strings.Contains(flutterOutput.String(), "Flutter 3.35.0") {
 		t.Fatalf("unexpected flutter output: %s", flutterOutput.String())
+	}
+
+	var dartOutput bytes.Buffer
+	if _, err := Run([]string{"dart", "--version"}, Env{Home: home, Cwd: project, Stdout: &dartOutput}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dartOutput.String(), "fake dart --version") {
+		t.Fatalf("unexpected dart output: %s", dartOutput.String())
 	}
 
 	removeOutput, err := Run([]string{"remove", "ohos@3.36"}, Env{Home: home, Cwd: project, Stdin: strings.NewReader("y\n")})
@@ -413,7 +436,7 @@ func TestAliasUse(t *testing.T) {
 	Run([]string{"install", "ohos", "3.35"}, Env{Home: home})
 	Run([]string{"alias", "add", "ohos_3_35", "ohos@3.35"}, Env{Home: home})
 
-	useOutput, err := Run([]string{"use", "ohos_3_35"}, Env{Home: home, Cwd: project})
+	useOutput, err := Run([]string{"use", "ohos_3_35"}, Env{Home: home, Cwd: project, Stdin: strings.NewReader("y\n")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,5 +583,170 @@ Tools - Dart 3.8.0 - DevTools 2.37.0`
 	}
 	if dv3 != "3.8.0" {
 		t.Fatalf("expected dart 3.8.0, got %s", dv3)
+	}
+}
+
+func TestRepoInit(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	sourceRepo := createSourceRepo(t, root)
+
+	Run([]string{"repo", "add", "ohos", sourceRepo}, Env{Home: home})
+
+	// Select ohos (2) — already added, should call repoSet
+	output, err := Run([]string{"repo", "init"}, Env{Home: home, Stdin: strings.NewReader("2\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "Updated repo ohos") {
+		t.Fatalf("expected 'Updated repo ohos' (repoSet path), got %s", output)
+	}
+	cfg, err := readConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Repos["ohos"] != "https://gitcode.com/openharmony-tpc/flutter_flutter.git" {
+		t.Fatalf("expected ohos URL updated to preset, got %s", cfg.Repos["ohos"])
+	}
+}
+
+func TestReleasesOnNonOfficialRepo(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	sourceRepo := createSourceRepo(t, root)
+	Run([]string{"repo", "add", "testrepo", sourceRepo}, Env{Home: home})
+
+	output, err := Run([]string{"releases", "testrepo"}, Env{Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "Tags:") {
+		t.Fatalf("expected Tags: in releases output, got %s", output)
+	}
+	if !strings.Contains(output, "3.35") {
+		t.Fatalf("expected tag 3.35 in releases output, got %s", output)
+	}
+	if !strings.Contains(output, "master") {
+		t.Fatalf("expected master branch in releases output, got %s", output)
+	}
+}
+
+func TestReleasesOnNonexistentRepo(t *testing.T) {
+	_, err := Run([]string{"releases", "nonexistent"}, Env{Home: filepath.Join(t.TempDir(), "home")})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "unknown repo: nonexistent") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRepoInitCancelled(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	output, err := Run([]string{"repo", "init"}, Env{Home: home, Stdin: strings.NewReader("\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != "Cancelled." {
+		t.Fatalf("expected Cancelled for empty input, got %s", output)
+	}
+}
+
+func TestFindProjectRoot(t *testing.T) {
+	root := t.TempDir()
+	parentDir := filepath.Join(root, "parent", "child")
+	if err := os.MkdirAll(parentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// No .fvmx anywhere — should return ""
+	if rootDir := findProjectRoot(parentDir); rootDir != "" {
+		t.Fatalf("expected empty, got %s", rootDir)
+	}
+
+	// Create .fvmxrc in root — find from child dir
+	if err := os.WriteFile(filepath.Join(root, ".fvmxrc"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rootDir := findProjectRoot(parentDir); rootDir != root {
+		t.Fatalf("expected %s, got %s", root, rootDir)
+	}
+
+	// Create .fvmxrc in parent — should be found before root
+	expectedParent := filepath.Join(root, "parent")
+	if err := os.WriteFile(filepath.Join(expectedParent, ".fvmxrc"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rootDir := findProjectRoot(parentDir); rootDir != expectedParent {
+		t.Fatalf("expected %s, got %s", expectedParent, rootDir)
+	}
+
+	// Run fvmx flutter from child dir works based on .fvmxrc
+	sourceRepo := createSourceRepo(t, root)
+	home := filepath.Join(root, "home")
+	Run([]string{"repo", "add", "ohos", sourceRepo}, Env{Home: home})
+	Run([]string{"install", "ohos", "3.35"}, Env{Home: home})
+	Run([]string{"use", "ohos@3.35"}, Env{Home: home, Cwd: expectedParent, Stdin: strings.NewReader("y\n")})
+
+	var flutterOutput bytes.Buffer
+	if _, err := Run([]string{"flutter", "--version"}, Env{Home: home, Cwd: parentDir, Stdout: &flutterOutput}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(flutterOutput.String(), "Flutter 3.35.0") {
+		t.Fatalf("flutter command should work from child dir, got %s", flutterOutput.String())
+	}
+
+	var dartOutput bytes.Buffer
+	if _, err := Run([]string{"dart", "--version"}, Env{Home: home, Cwd: parentDir, Stdout: &dartOutput}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dartOutput.String(), "fake dart --version") {
+		t.Fatalf("dart command should work from child dir, got %s", dartOutput.String())
+	}
+}
+
+func TestUseWithPubspecYaml(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	project := filepath.Join(root, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceRepo := createSourceRepo(t, root)
+	Run([]string{"repo", "add", "ohos", sourceRepo}, Env{Home: home})
+	Run([]string{"install", "ohos", "3.35"}, Env{Home: home})
+
+	// No pubspec.yaml — confirm n → Cancelled.
+	output, err := Run([]string{"use", "ohos@3.35"}, Env{Home: home, Cwd: project, Stdin: strings.NewReader("n\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != "Cancelled." {
+		t.Fatalf("expected Cancelled, got %s", output)
+	}
+
+	// No pubspec.yaml — confirm y → normal use
+	output, err = Run([]string{"use", "ohos@3.35"}, Env{Home: home, Cwd: project, Stdin: strings.NewReader("y\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "Using ohos@3.35") {
+		t.Fatalf("expected use output, got %s", output)
+	}
+
+	// pubspec.yaml exists — no confirm needed
+	otherProject := filepath.Join(root, "other")
+	if err := os.MkdirAll(otherProject, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(otherProject, "pubspec.yaml"), []byte("name: test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err = Run([]string{"use", "ohos@3.35"}, Env{Home: home, Cwd: otherProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "Using ohos@3.35") {
+		t.Fatalf("expected use output, got %s", output)
 	}
 }
