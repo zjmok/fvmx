@@ -50,6 +50,7 @@ fvmx --help
 常用命令：
 
 ```bash
+fvmx --version                           # 查看版本
 fvmx repo init                           # 交互式添加 presets 仓库
 fvmx repo add ohos <url>
 fvmx repo set ohos <new-url>

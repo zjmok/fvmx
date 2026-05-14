@@ -50,6 +50,7 @@ fvmx --help
 Common commands:
 
 ```bash
+fvmx --version                           # show version
 fvmx repo init                           # interactively add preset repos
 fvmx repo add ohos <url>
 fvmx repo set ohos <new-url>

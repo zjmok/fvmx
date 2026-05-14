@@ -7,7 +7,17 @@ import (
 	"fvmx/internal/fvmx"
 )
 
+// version 在 release 构建时由 goreleaser 通过 -ldflags 注入
+var version = "dev"
+
 func main() {
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-v" {
+			fmt.Println(version)
+			return
+		}
+	}
+
 	output, err := fvmx.Run(os.Args[1:], fvmx.Env{})
 	if err != nil {
 		if exitErr, ok := err.(*fvmx.ExitError); ok {

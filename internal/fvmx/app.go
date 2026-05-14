@@ -181,6 +181,7 @@ func Run(args []string, env Env) (string, error) {
 
 func usage() string {
 	return `Usage:
+  fvmx --version
   fvmx repo init
   fvmx repo add <name> <url>
   fvmx repo set <name> <url>
