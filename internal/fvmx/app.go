@@ -934,6 +934,35 @@ func findProjectRoot(cwd string) string {
 	}
 }
 
+// addToGitignore 在项目 .gitignore 中添加 .fvmx/ 忽略规则。
+// 如果 .gitignore 不存在则创建，已含有 .fvmx/ 则跳过。
+func addToGitignore(projectDir string) error {
+	gitignorePath := filepath.Join(projectDir, ".gitignore")
+	content, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		content = []byte{}
+	}
+
+	for _, line := range strings.Split(string(content), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == ".fvmx" || trimmed == ".fvmx/" {
+			return nil
+		}
+	}
+
+	var builder strings.Builder
+	builder.WriteString(string(content))
+	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
+		builder.WriteString("\n")
+	}
+	builder.WriteString("\n# FVMX Version Cache\n.fvmx/\n")
+
+	return os.WriteFile(gitignorePath, []byte(builder.String()), 0o644)
+}
+
 // useVersion 将当前目录绑定到指定版本。
 // 创建 .fvmx/flutter_sdk symlink（供 IDE/CI 使用）、.fvmx/version（完整版本 ID）、.fvmxrc（配置）。
 func useVersion(home, spec, projectDir string) (string, error) {
@@ -955,6 +984,9 @@ func useVersion(home, spec, projectDir string) (string, error) {
 		return "", err
 	}
 	if err := writeProjectSelection(projectDir, version.ID); err != nil {
+		return "", err
+	}
+	if err := addToGitignore(projectDir); err != nil {
 		return "", err
 	}
 

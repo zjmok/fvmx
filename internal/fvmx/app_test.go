@@ -749,4 +749,27 @@ func TestUseWithPubspecYaml(t *testing.T) {
 	if !strings.Contains(output, "Using ohos@3.35") {
 		t.Fatalf("expected use output, got %s", output)
 	}
+
+	// Verify .gitignore was updated
+	gitignoreContent, err := os.ReadFile(filepath.Join(otherProject, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gitignoreContent), ".fvmx/") {
+		t.Fatalf("expected .fvmx/ in .gitignore, got %s", gitignoreContent)
+	}
+	if !strings.Contains(string(gitignoreContent), "FVMX Version Cache") {
+		t.Fatalf("expected FVMX Version Cache comment in .gitignore, got %s", gitignoreContent)
+	}
+
+	// Second use should not duplicate .fvmx/ entry
+	Run([]string{"use", "ohos@3.35"}, Env{Home: home, Cwd: otherProject})
+	gitignoreContent2, err := os.ReadFile(filepath.Join(otherProject, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := strings.Count(string(gitignoreContent2), ".fvmx/")
+	if count != 1 {
+		t.Fatalf("expected exactly one .fvmx/ entry, got %d\n%s", count, gitignoreContent2)
+	}
 }
