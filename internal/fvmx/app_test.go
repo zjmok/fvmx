@@ -605,7 +605,7 @@ func TestRepoInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Repos["ohos"] != "https://gitcode.com/openharmony-tpc/flutter_flutter.git" {
+	if cfg.Repos["ohos"] != "https://gitcode.com/CPF-Flutter/flutter_flutter.git" {
 		t.Fatalf("expected ohos URL updated to preset, got %s", cfg.Repos["ohos"])
 	}
 }
