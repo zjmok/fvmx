@@ -38,6 +38,7 @@ Language: [简体中文](README.md) | English
 - `fvmx alias list`: list all global aliases
 - `fvmx alias remove <alias>`: remove a global alias
 - `fvmx releases <repo> [channel]`: list available releases (official repos fetch from Google Storage, others use git ls-remote)
+- `fvmx update [version] [--check] [--pre] [--force]`: check and upgrade the `fvmx` binary from GitHub Releases; refuses dev builds by default
 
 ## Usage
 
@@ -69,7 +70,24 @@ fvmx alias remove ohos_3_35
 fvmx releases origin                     # official stable releases
 fvmx releases origin beta                # official beta releases
 fvmx releases ohos                       # non-official repo tags/branches
+fvmx update                              # check and upgrade to the latest stable release
+fvmx update --check                      # only check for a newer version, do not download
+fvmx update 0.2.0                        # upgrade to a specific version (accepts v0.2.0 / 0.2.0)
+fvmx update --pre                        # include prereleases
 ```
+
+### `fvmx update`
+
+Downloads and replaces the running `fvmx` binary from `zjmok/fvmx` GitHub Releases.
+
+- When `<version>` is omitted, fetches `releases/latest`; otherwise fetches `releases/tags/v<version>` (the `v` prefix is added automatically).
+- Compares the local version against the release. If already on the latest, exits 0. Otherwise prompts for confirmation.
+- Prereleases are skipped by default; pass `--pre` to include them.
+- After download, verifies the archive against the release's `checksums.txt` using SHA256. On mismatch the binary is **not** replaced.
+- Replacement is two-phase: write to `<exe>.new`, then atomically rename. On Unix this is `os.Rename`; on Windows it uses `cmd /c "ping ... & move /Y"` so the move happens after the parent process exits.
+- Dev builds refuse to self-update by default (exit 2); pass `--force` to override.
+- Exit codes: 0 = success / already-latest / cancelled / `--check`; 2 = flag error / dev without `--force`; 1 = network / checksum / IO failure.
+- Set `FVMX_UPDATE_API` to override the GitHub API base URL (intended for tests and proxies).
 
 ## Development
 
@@ -158,6 +176,7 @@ The `repo` field is optional and enables exact version matching, avoiding ambigu
 - `repo add`, `repo update`, and `install` output step logs (e.g. `Cloning bare repo...`, `Fetching repo...`, `Resolving ref...`) for visibility during long-running operations.
 - `repo init` uses an embedded `presets.json` to offer official and ohos presets interactively. Already-configured repos are updated via `repo set`, new repos are added via `repo add`.
 - `releases` fetches the release list from Google Storage's `releases_<platform>.json` for official repos (`github.com/flutter/flutter`), with channel defaulting to `stable`. For non-official repos, it uses `git ls-remote` to list tags and branches.
+- `update` adds no new dependencies: semver comparison is hand-written (`parseVersion` / `compareVersions` in `update.go`), and archive extraction uses `archive/tar` + `compress/gzip` / `archive/zip` to unpack the `fvmx` binary. Replacement is two-phase — write to `<exe>.new`, then atomically rename. Windows schedules the move via `cmd /c "ping ... & move /Y"` so it runs after the parent exits. Integrity is verified using SHA256 against the release's `checksums.txt`; mismatches abort the replacement. The version is injected into `main.version` via `-ldflags "-X main.version=..."`.
 
 ## Roadmap
 

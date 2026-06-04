@@ -18,7 +18,7 @@ func main() {
 		}
 	}
 
-	output, err := fvmx.Run(os.Args[1:], fvmx.Env{})
+	output, err := fvmx.Run(os.Args[1:], fvmx.Env{Version: version})
 	if err != nil {
 		if exitErr, ok := err.(*fvmx.ExitError); ok {
 			if exitErr.Message != "" {

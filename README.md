@@ -38,6 +38,7 @@
 - `fvmx alias list`：列出所有全局别名
 - `fvmx alias remove <alias>`：删除全局别名
 - `fvmx releases <repo> [channel]`：查看可用版本（官方仓库从 Google Storage 获取，非官方从 git refs 获取）
+- `fvmx update [version] [--check] [--pre] [--force]`：从 GitHub Releases 检查并升级 `fvmx` 本体；默认拒绝 dev 构建
 
 ## 使用方式
 
@@ -69,7 +70,24 @@ fvmx alias remove ohos_3_35
 fvmx releases origin                     # 查看官方 stable 版本
 fvmx releases origin beta                # 查看官方 beta 版本
 fvmx releases ohos                       # 查看非官方仓库的 tags/branches
+fvmx update                              # 检查并升级到最新 stable release
+fvmx update --check                      # 仅检查是否有新版本，不下载
+fvmx update 0.2.0                        # 升级到指定版本（接受 v0.2.0 / 0.2.0）
+fvmx update --pre                        # 包含 prerelease
 ```
+
+### `fvmx update`
+
+从 `zjmok/fvmx` GitHub Releases 下载并替换当前二进制：
+
+- 省略 `<version>` 时取 `releases/latest`；指定时访问 `releases/tags/v<version>`（自动补 `v`）。
+- 升级前会与本地版本对比：当前是最新 → 退出 0；非最新 → 交互确认。
+- 默认忽略 prerelease；加 `--pre` 后允许升级到 prerelease。
+- 下载后用同 release 的 `checksums.txt` 做 SHA256 校验，失败则不替换。
+- 替换策略：先写到 `<exe>.new`，再原子替换（Unix 用 `os.Rename`；Windows 用 `cmd /c` 异步 `move /Y`）。
+- dev 构建默认拒绝升级（退出 2），加 `--force` 可绕过。
+- 退出码：0 = 成功 / 已是最新 / 取消 / `--check`；2 = flag 错误 / dev 无 `--force`；1 = 网络 / 校验 / IO 失败。
+- 可用 `FVMX_UPDATE_API` 覆盖 GitHub API base（仅用于测试与代理场景）。
 
 ## 开发
 
@@ -158,6 +176,7 @@ ohos@3.35
 - `repo add`、`repo update`、`install` 会输出步骤日志（如 `Cloning bare repo...`、`Fetching repo...`、`Resolving ref...`），方便了解长耗时命令的进度。
 - `repo init` 通过内嵌的 `presets.json` 提供官方和 ohos 两种预设仓库选择。已添加的 repo 自动执行 `repo set` 覆盖 URL，未添加的执行 `repo add`。
 - `releases` 对官方仓库（`github.com/flutter/flutter`）从 Google Storage 的 `releases_<platform>.json` 获取版本列表，channel 默认 `stable`；对非官方仓库通过 `git ls-remote` 获取 tags 和 branches。
+- `update` 不引入新依赖：手写 semver 对比（`update.go` 中的 `parseVersion` / `compareVersions`），用 `archive/tar`+`compress/gzip` / `archive/zip` 提取 `fvmx` 二进制。替换走两阶段：先写 `<exe>.new`，再原子 rename；Windows 用 `cmd /c "ping ... & move /Y"` 异步替换，父进程退出后落地。校验用 release 自带的 `checksums.txt` 做 SHA256 校验，失败不替换。版本变量通过 `main.version` + `-ldflags "-X main.version=..."` 注入。
 
 ## 规划
 

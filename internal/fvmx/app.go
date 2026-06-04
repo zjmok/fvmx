@@ -55,11 +55,14 @@ func (e *ExitError) Error() string {
 
 // Env 是命令执行上下文，测试时通过注入这些字段来隔离文件系统和 I/O
 type Env struct {
-	Home   string        // 全局数据目录（~/.fvmx 或 FVMX_HOME）
-	Cwd    string        // 当前工作目录
-	Stdin  io.Reader     // 用户输入（测试时可注入）
-	Stdout io.Writer     // 标准输出
-	Stderr io.Writer     // 错误输出
+	Home       string        // 全局数据目录（~/.fvmx 或 FVMX_HOME）
+	Cwd        string        // 当前工作目录
+	Stdin      io.Reader     // 用户输入（测试时可注入）
+	Stdout     io.Writer     // 标准输出
+	Stderr     io.Writer     // 错误输出
+	HTTPClient *http.Client  // HTTP 客户端，update 命令使用；为空时由 Run 设置默认值
+	Version    string        // 当前 fvmx 版本（main 通过 ldflags 注入），为空时 Run 设置为 "dev"
+	SelfPath   string        // 当前可执行文件路径；为空时 update 命令使用 os.Executable()
 }
 
 // confirm 向用户输出 prompt，等待 y/Y 输入。其他输入视为拒绝。
@@ -125,6 +128,12 @@ func Run(args []string, env Env) (string, error) {
 	if env.Stderr == nil {
 		env.Stderr = os.Stderr
 	}
+	if env.HTTPClient == nil {
+		env.HTTPClient = &http.Client{Timeout: 180 * time.Second}
+	}
+	if env.Version == "" {
+		env.Version = "dev"
+	}
 
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		return usage(), nil
@@ -174,6 +183,8 @@ func Run(args []string, env Env) (string, error) {
 		return aliasCommand(env.Home, args[1:])
 	case "releases":
 		return releasesCommand(env.Home, args[1:])
+	case "update":
+		return runUpdate(args[1:], env)
 	default:
 		return "", usageError(fmt.Sprintf("unknown command: %s", args[0]))
 	}
@@ -196,6 +207,7 @@ func usage() string {
   fvmx alias list
   fvmx alias remove <alias>
   fvmx releases <repo> [channel]
+  fvmx update [version] [--check] [--pre] [--force]
   fvmx flutter [args...]
   fvmx dart [args...]
 
