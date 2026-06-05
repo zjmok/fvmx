@@ -76,19 +76,6 @@ fvmx update 0.2.0                        # 升级到指定版本（接受 v0.2.0
 fvmx update --pre                        # 包含 prerelease
 ```
 
-### `fvmx update`
-
-从 `zjmok/fvmx` GitHub Releases 下载并替换当前二进制：
-
-- 省略 `<version>` 时取 `releases/latest`；指定时访问 `releases/tags/v<version>`（自动补 `v`）。
-- 升级前会与本地版本对比：当前是最新 → 退出 0；非最新 → 交互确认。
-- 默认忽略 prerelease；加 `--pre` 后允许升级到 prerelease。
-- 下载后用同 release 的 `checksums.txt` 做 SHA256 校验，失败则不替换。
-- 替换策略：先写到 `<exe>.new`，再原子替换（Unix 用 `os.Rename`；Windows 用 `cmd /c` 异步 `move /Y`）。
-- dev 构建默认拒绝升级（退出 2），加 `--force` 可绕过。
-- 退出码：0 = 成功 / 已是最新 / 取消 / `--check`；2 = flag 错误 / dev 无 `--force`；1 = 网络 / 校验 / IO 失败。
-- 可用 `FVMX_UPDATE_API` 覆盖 GitHub API base（仅用于测试与代理场景）。
-
 ## 开发
 
 开发时可以直接用 `go run` 调试当前源码：

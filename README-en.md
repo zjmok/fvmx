@@ -76,19 +76,6 @@ fvmx update 0.2.0                        # upgrade to a specific version (accept
 fvmx update --pre                        # include prereleases
 ```
 
-### `fvmx update`
-
-Downloads and replaces the running `fvmx` binary from `zjmok/fvmx` GitHub Releases.
-
-- When `<version>` is omitted, fetches `releases/latest`; otherwise fetches `releases/tags/v<version>` (the `v` prefix is added automatically).
-- Compares the local version against the release. If already on the latest, exits 0. Otherwise prompts for confirmation.
-- Prereleases are skipped by default; pass `--pre` to include them.
-- After download, verifies the archive against the release's `checksums.txt` using SHA256. On mismatch the binary is **not** replaced.
-- Replacement is two-phase: write to `<exe>.new`, then atomically rename. On Unix this is `os.Rename`; on Windows it uses `cmd /c "ping ... & move /Y"` so the move happens after the parent process exits.
-- Dev builds refuse to self-update by default (exit 2); pass `--force` to override.
-- Exit codes: 0 = success / already-latest / cancelled / `--check`; 2 = flag error / dev without `--force`; 1 = network / checksum / IO failure.
-- Set `FVMX_UPDATE_API` to override the GitHub API base URL (intended for tests and proxies).
-
 ## Development
 
 During development, you can run the current source directly with `go run`:
