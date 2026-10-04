@@ -1,6 +1,5 @@
-.fvm/
+.fvmx/
 .gocache/
 coverage/
 *.log
-/fvmx.exe
-/fvmx
+/dist/

@@ -93,18 +93,24 @@ go test ./...
 
 ## Build
 
-Use the following commands when you need to build the binary yourself.
+Use the following commands when you need to build the binary yourself. Build artifacts go to `dist/` (gitignored; staging area only — install to PATH manually if you want to run `fvmx` directly). Names follow `fvmx-<os>-<arch>`, with `.exe` for Windows binaries. Filenames carry no version — query it with `fvmx --version`.
 
 Windows:
 
 ```powershell
-go build -o fvmx.exe ./cmd/fvmx
+go build -o dist/fvmx-windows-amd64.exe ./cmd/fvmx
 ```
 
 macOS / Linux:
 
 ```bash
-go build -o fvmx ./cmd/fvmx
+go build -o dist/fvmx-darwin-arm64 ./cmd/fvmx
+```
+
+Cross-compile other platforms (pure Go standard library, no CGO, works from any host):
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/fvmx-linux-amd64 ./cmd/fvmx
 ```
 
 ## Storage Layout

@@ -93,18 +93,24 @@ go test ./...
 
 ## 编译
 
-需要自己编译时使用以下命令。
+需要自己编译时使用以下命令。构建产物统一输出到 `dist/`（已 gitignore，仅作构建暂存区；如需加入 PATH 日常使用请自行安装），命名 `fvmx-<os>-<arch>`，Windows 产物带 `.exe` 后缀。文件名不带版本号，版本通过 `fvmx --version` 查询。
 
 Windows：
 
 ```powershell
-go build -o fvmx.exe ./cmd/fvmx
+go build -o dist/fvmx-windows-amd64.exe ./cmd/fvmx
 ```
 
 macOS / Linux：
 
 ```bash
-go build -o fvmx ./cmd/fvmx
+go build -o dist/fvmx-darwin-arm64 ./cmd/fvmx
+```
+
+交叉编译其他平台（项目纯 Go 标准库、无 CGO，本机可直接交叉编译）：
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/fvmx-linux-amd64 ./cmd/fvmx
 ```
 
 ## 存储结构

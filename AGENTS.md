@@ -31,9 +31,9 @@ go run ./cmd/fvmx repo list
 # 测试
 go test ./...
 
-# 编译
-go build -o fvmx ./cmd/fvmx          # macOS/Linux
-go build -o fvmx.exe ./cmd/fvmx      # Windows
+# 编译（产物统一输出到 dist/，命名 fvmx-<os>-<arch>[.exe]）
+go build -o dist/fvmx-windows-amd64.exe ./cmd/fvmx    # Windows 本机
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dist/fvmx-linux-arm64 ./cmd/fvmx   # 交叉编译
 ```
 
 ## 架构与设计要点
@@ -83,6 +83,12 @@ go build -o fvmx.exe ./cmd/fvmx      # Windows
 
 - `.fvmx/flutter_sdk` 使用目录 junction（减少权限要求）。
 - update 替换用 `ping` 延迟 + `move /Y` 异步替换，避免文件被占用。
+
+### 构建产物约定
+
+- 所有平台构建产物（本机与交叉编译）统一输出到 `dist/`，命名 `fvmx-<os>-<arch>[.exe]`，Windows 产物带 `.exe` 后缀。
+- `dist/` 已被 gitignore，仅作为构建暂存区：文件名不带版本号（版本用 `fvmx --version` 查询，发布版本由 GoReleaser 的 archive 名携带）。
+- 安装区（加入 PATH 供日常调用的 `fvmx.exe`）由使用者手动维护，不放在项目目录内；正式发布产物由 GoReleaser 生成（输出到其默认的 `dist/`）。
 
 ## 代码风格
 
