@@ -109,7 +109,7 @@ go build -o fvmx ./cmd/fvmx
 
 ## Storage Layout
 
-The global data directory defaults to `~/.fvmx`. You can override it with `FVMX_HOME`:
+The global data directory defaults to `~/.fvmx`. You can override it with `FVMX_CACHE_PATH`:
 
 ```text
 ~/.fvmx/

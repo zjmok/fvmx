@@ -109,7 +109,7 @@ go build -o fvmx ./cmd/fvmx
 
 ## 存储结构
 
-全局数据目录默认是 `~/.fvmx`，可通过 `FVMX_HOME` 覆盖：
+全局数据目录默认是 `~/.fvmx`，可通过 `FVMX_CACHE_PATH` 覆盖：
 
 ```text
 ~/.fvmx/

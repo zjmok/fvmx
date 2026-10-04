@@ -55,7 +55,7 @@ func (e *ExitError) Error() string {
 
 // Env 是命令执行上下文，测试时通过注入这些字段来隔离文件系统和 I/O
 type Env struct {
-	Home       string        // 全局数据目录（~/.fvmx 或 FVMX_HOME）
+	Home       string        // 全局数据目录（~/.fvmx 或 FVMX_CACHE_PATH）
 	Cwd        string        // 当前工作目录
 	Stdin      io.Reader     // 用户输入（测试时可注入）
 	Stdout     io.Writer     // 标准输出
@@ -212,16 +212,16 @@ func usage() string {
   fvmx dart [args...]
 
 Environment:
-  FVMX_HOME  Override the storage directory (default: ~/.fvmx)`
+  FVMX_CACHE_PATH  Override the storage directory (default: ~/.fvmx)`
 }
 
 func usageError(message string) error {
 	return &ExitError{Message: message + "\n\n" + usage(), Code: 2}
 }
 
-// defaultHome 获取 fvmx 全局数据目录。优先读取 FVMX_HOME 环境变量，否则使用 ~/.fvmx
+// defaultHome 获取 fvmx 全局数据目录。优先读取 FVMX_CACHE_PATH 环境变量，否则使用 ~/.fvmx
 func defaultHome() string {
-	if home := os.Getenv("FVMX_HOME"); home != "" {
+	if home := os.Getenv("FVMX_CACHE_PATH"); home != "" {
 		return filepath.Clean(home)
 	}
 

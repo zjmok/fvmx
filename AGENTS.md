@@ -51,7 +51,7 @@ go build -o fvmx.exe ./cmd/fvmx      # Windows
 
 ### 存储结构
 
-- 全局目录 `~/.fvmx`（可通过 `FVMX_HOME` 覆盖）：
+- 全局目录 `~/.fvmx`（可通过 `FVMX_CACHE_PATH` 覆盖）：
   - `repos/<name>.git` — 裸仓库（共享 Git objects）
   - `versions/<repo>@<ref>` — worktree（每个版本独立 SDK）
   - `config.json` — 仓库配置 + 别名映射
