@@ -15,7 +15,7 @@ Both tools serve a similar purpose; the differences below are design trade-offs 
 | Version Granularity | commit / branch / tag | Versions / tags / commit hashes |
 | Project Pinning | `.fvmxrc` + `.fvmx/` (with a `flutter_sdk` link for IDEs / CI) | `.fvmrc` + `.fvm/` |
 | Command Proxy | `fvmx flutter` / `fvmx dart` | `fvm flutter` / `fvm dart` |
-| Global Default Version | ❌ Not yet (global aliases require an explicit `use`) | ✅ `fvm global` |
+| Global Default Version | ✅ `fvmx global` (link at `~/.fvmx/default`, used via PATH) | ✅ `fvm global` |
 | Maturity | New tool; fewer cross-platform edge cases battle-tested | Mature ecosystem, well documented, battle-tested |
 
 ### Pros and Cons
@@ -25,7 +25,7 @@ Both tools serve a similar purpose; the differences below are design trade-offs 
 - ✅ Object sharing covers every source: one bare repo per repo, shared even between fork-based versions (measured: two ohos versions share a single 2.0 GB object store; the same setup on fvm costs two independent ~4 GB copies)
 - ✅ Worktree has no indirection layer: objects always live inside the bare repo, per-version Git metadata is only 1–2 MB
 - ✅ Single binary in pure Go standard library, cross-compilable from any platform
-- ⚠️ New tool; ecosystem and cross-platform edge cases are less battle-tested; no global default version yet
+- ⚠️ New tool; ecosystem and cross-platform edge cases are less battle-tested
 - ⚠️ After moving the cache directory, worktree pointers need `git worktree repair` (same path coupling as fvm, but with an official repair command)
 
 **fvm**
@@ -49,6 +49,7 @@ Both tools serve a similar purpose; the differences below are design trade-offs 
 - `fvmx flutter [args...]`: resolve the installed SDK from `.fvmxrc` and execute `bin/flutter`
 - `fvmx dart [args...]`: resolve the installed SDK from `.fvmxrc` and execute `bin/dart`
 - `fvmx remove <repo@ref-or-alias>`: remove an installed version with `git worktree remove`; prompts for confirmation; supports alias
+- `fvmx global`: show the global default version; `fvmx global <repo@ref-or-alias>` sets it (must be installed, supports alias); `fvmx global --unlink` removes it. Add `~/.fvmx/default/bin` to PATH to use the global `flutter`/`dart` outside projects
 - `fvmx alias add <alias> <repo@ref>`: create a global alias pointing to an installed version
 - `fvmx alias list`: list all global aliases
 - `fvmx alias remove <alias>`: remove a global alias
@@ -79,6 +80,9 @@ fvmx use ohos@3.35
 fvmx flutter --version
 fvmx dart --version                      # Dart command forwarding
 fvmx remove ohos@3.35
+fvmx global                              # show the global default version
+fvmx global ohos@3.35                    # set the global default (supports alias)
+fvmx global --unlink                     # remove the global default
 fvmx alias add ohos_3_35 ohos@3.35
 fvmx alias list
 fvmx alias remove ohos_3_35
@@ -140,6 +144,7 @@ The global data directory defaults to `~/.fvmx`. You can override it with `FVMX_
 ├── versions/
 │   ├── origin@stable/
 │   └── ohos@3.35/
+├── default -> versions/ohos@3.35   # global default version link (for PATH use)
 └── config.json   # { "repos": {...}, "aliases": {...} }
 ```
 
@@ -177,7 +182,8 @@ The `repo` field is optional and enables exact version matching, avoiding ambigu
 - If a ref contains path separators or other characters unsuitable for directory names, they are normalized to `-`.
 - `install` only creates a worktree. It does not share or symlink `bin/cache`, so each Flutter SDK version keeps its own cache.
 - `fvmx` commands only read `.fvmxrc` (the project root config file), never `.fvmx/` directly. The `.fvmx/` directory (containing `flutter_sdk` symlink and `version`) is created by `fvmx use` for IDE / script / CI use.
-- `fvmx list`, `fvmx flutter`, and `fvmx dart` share the same resolution logic: ① read `.fvmxrc` → with `repo` + `flutter` for exact installed version match ② with only `flutter`, scan `versions/` for a unique suffix match. `fvmx list` then maps the SDK path back to a version ID.
+- `fvmx list`, `fvmx flutter`, and `fvmx dart` share the same resolution logic: ① read `.fvmxrc` → with `repo` + `flutter` for exact installed version match ② with only `flutter`, scan `versions/` for a unique suffix match. Outside a project (no `.fvmxrc` found), `flutter`/`dart` fall back to the global default set by `fvmx global`; if none is set, they error out.
+- `fvmx global` persists state in the `~/.fvmx/default` link itself (mirroring fvm's `~/fvm/default`), not in `config.json`; the version ID is recovered from the link target's directory name. `list` marks the global version in a dedicated Global column.
 - On Windows, `.fvmx/flutter_sdk` uses a directory junction to avoid requiring elevated privileges for normal directory symlinks.
 - `remove` and `repo remove` prompt with `(y/N)` and only proceed on `y`/`Y` input. `repo remove` blocks deletion if any version from that repo is still installed.
 - Aliases are stored globally in `~/.fvmx/config.json` under the `aliases` key. They can only point to already-installed versions and are resolved by `use` and `remove` commands.

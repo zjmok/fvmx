@@ -15,7 +15,7 @@
 | 版本粒度 | commit / branch / tag | 版本号 / tag / commit hash |
 | 项目绑定 | `.fvmxrc` + `.fvmx/`（含 `flutter_sdk` 链接，供 IDE / CI 直接使用） | `.fvmrc` + `.fvm/` |
 | 命令转发 | `fvmx flutter` / `fvmx dart` | `fvm flutter` / `fvm dart` |
-| 全局默认版本 | ❌ 暂未提供（全局别名需显式 `use`） | ✅ `fvm global` |
+| 全局默认版本 | ✅ `fvmx global`（链接 `~/.fvmx/default`，配合 PATH 使用） | ✅ `fvm global` |
 | 成熟度 | 新工具，跨平台边界场景验证较少 | 社区生态成熟，文档完善，久经验证 |
 
 ### 优缺点
@@ -25,7 +25,7 @@
 - ✅ 对象共享覆盖全部来源：每个 repo 一个裸仓库，fork / 自定义来源的版本之间同样共享（实测：两个 ohos 版本共享同一份 2.0 GB 对象库，fvm 同场景为两份独立副本约 4 GB）
 - ✅ worktree 机制无间接层：对象始终在裸仓库本体内，单版本 Git 元数据仅 1~2 MB
 - ✅ 纯 Go 标准库单二进制，任意平台可交叉编译
-- ⚠️ 新工具，生态与跨平台边界场景验证少；暂无全局默认版本
+- ⚠️ 新工具，生态与跨平台边界场景验证少
 - ⚠️ 缓存目录迁移后 worktree 指针需 `git worktree repair` 修复（路径耦合与 fvm 同源，但有官方修复命令）
 
 **fvm**
@@ -49,6 +49,7 @@
 - `fvmx flutter [args...]`：根据 `.fvmxrc` 解析已安装 SDK 并执行 `bin/flutter`
 - `fvmx dart [args...]`：根据 `.fvmxrc` 解析已安装 SDK 并执行 `bin/dart`
 - `fvmx remove <repo@ref-or-alias>`：通过 `git worktree remove` 删除已安装版本；删除前确认提示；支持 alias
+- `fvmx global`：查看全局默认版本；`fvmx global <repo@ref-or-alias>` 设置全局默认（需已安装，支持 alias）；`fvmx global --unlink` 移除。设置后把 `~/.fvmx/default/bin` 加入 PATH，即可在项目外直接使用全局 `flutter`/`dart`
 - `fvmx alias add <alias> <repo@ref>`：创建指向已安装版本的全局别名
 - `fvmx alias list`：列出所有全局别名
 - `fvmx alias remove <alias>`：删除全局别名
@@ -79,6 +80,9 @@ fvmx use ohos@3.35
 fvmx flutter --version
 fvmx dart --version                      # Dart 命令转发
 fvmx remove ohos@3.35
+fvmx global                              # 查看全局默认版本
+fvmx global ohos@3.35                    # 设置全局默认（支持 alias）
+fvmx global --unlink                     # 移除全局默认
 fvmx alias add ohos_3_35 ohos@3.35
 fvmx alias list
 fvmx alias remove ohos_3_35
@@ -140,6 +144,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/fvmx-linux-amd64 ./cmd/fv
 ├── versions/
 │   ├── origin@stable/
 │   └── ohos@3.35/
+├── default -> versions/ohos@3.35   # global 默认版本链接（供 PATH 使用）
 └── config.json   # { "repos": {...}, "aliases": {...} }
 ```
 
@@ -177,7 +182,8 @@ ohos@3.35
 - 如果 ref 包含路径分隔符或其他不适合作为目录名的字符，会被规范化为 `-`。
 - `install` 只创建 worktree，不共享、不软链 `bin/cache`，保证每个 SDK 版本的 Flutter cache 独立。
 - `fvmx` 命令只读取 `.fvmxrc`（项目根配置文件），不直接访问 `.fvmx/` 目录。`.fvmx/` 目录（含 `flutter_sdk`、`version`）由 `fvmx use` 创建，供 IDE / 脚本 / CI 使用。
-- `fvmx list`、`fvmx flutter`、`fvmx dart` 使用同一套解析逻辑：① 读 `.fvmxrc` → 有 `repo` + `flutter` 则精确匹配已安装版本 ② 只有 `flutter` 则扫描 `versions/` 唯一匹配。
+- `fvmx list`、`fvmx flutter`、`fvmx dart` 使用同一套解析逻辑：① 读 `.fvmxrc` → 有 `repo` + `flutter` 则精确匹配已安装版本 ② 只有 `flutter` 则扫描 `versions/` 唯一匹配。项目外（无 `.fvmxrc`）时 `flutter`/`dart` 回退到 `fvmx global` 设置的全局默认版本，仍未设置则报错。
+- `fvmx global` 的持久化就是 `~/.fvmx/default` 链接本身（与 fvm 的 `~/fvm/default` 同构），不写 `config.json`；版本 ID 从链接目标目录名反解。`list` 用 Global 列标记当前全局版本。
 - Windows 下 `.fvmx/flutter_sdk` 使用目录 junction，减少普通用户创建目录链接时的权限要求。
 - `remove` 和 `repo remove` 在执行操作前提示 `(y/N)`，只有输入 `y` 或 `Y` 才继续。`repo remove` 如果检测到该 repo 仍有已安装版本会直接拒绝。
 - 全局别名存储在 `~/.fvmx/config.json` 的 `aliases` 字段中，只能指向已安装版本，`use` 和 `remove` 命令支持别名解析。

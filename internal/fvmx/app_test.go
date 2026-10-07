@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1435,5 +1436,194 @@ func buildReleaseJSON(tag, assetName, checksum, assetURL, checksumsURL, body str
 	}
 	buf, _ := json.Marshal(release)
 	return buf
+}
+
+// setupGlobalFixture 准备带有已安装版本 ohos@3.35 的环境，返回 home 与 project 路径
+func setupGlobalFixture(t *testing.T) (string, string) {
+	t.Helper()
+
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	project := filepath.Join(root, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	sourceRepo := createSourceRepo(t, root)
+	if _, err := Run([]string{"repo", "add", "ohos", sourceRepo}, Env{Home: home, Cwd: project}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run([]string{"install", "ohos", "3.35"}, Env{Home: home, Cwd: project}); err != nil {
+		t.Fatal(err)
+	}
+	return home, project
+}
+
+func TestGlobalSetShowUnlink(t *testing.T) {
+	home, project := setupGlobalFixture(t)
+	linkPath := filepath.Join(home, "default")
+
+	setOutput, err := Run([]string{"global", "ohos@3.35"}, Env{Home: home, Cwd: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(setOutput, "Global version set to ohos@3.35") {
+		t.Fatalf("unexpected global set output: %s", setOutput)
+	}
+	if _, err := os.Lstat(linkPath); err != nil {
+		t.Fatalf("global link should exist after set: %v", err)
+	}
+
+	showOutput, err := Run([]string{"global"}, Env{Home: home, Cwd: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(showOutput, "Global version: ohos@3.35") {
+		t.Fatalf("unexpected global show output: %s", showOutput)
+	}
+
+	unlinkOutput, err := Run([]string{"global", "--unlink"}, Env{Home: home, Cwd: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unlinkOutput != "Global version unlinked." {
+		t.Fatalf("unexpected unlink output: %s", unlinkOutput)
+	}
+	if _, err := os.Lstat(linkPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("global link should be removed after unlink, got: %v", err)
+	}
+
+	showOutput, err = Run([]string{"global"}, Env{Home: home, Cwd: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(showOutput, "No global version is set") {
+		t.Fatalf("unexpected show output after unlink: %s", showOutput)
+	}
+
+	unlinkOutput, err = Run([]string{"global", "--unlink"}, Env{Home: home, Cwd: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unlinkOutput != "No global version is set." {
+		t.Fatalf("unexpected repeated unlink output: %s", unlinkOutput)
+	}
+}
+
+func TestGlobalSetViaAlias(t *testing.T) {
+	home, project := setupGlobalFixture(t)
+
+	if _, err := Run([]string{"alias", "add", "myalias", "ohos@3.35"}, Env{Home: home, Cwd: project}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run([]string{"global", "myalias"}, Env{Home: home, Cwd: project}); err != nil {
+		t.Fatal(err)
+	}
+
+	showOutput, err := Run([]string{"global"}, Env{Home: home, Cwd: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(showOutput, "Global version: ohos@3.35") {
+		t.Fatalf("global show should resolve alias to real version id, got %s", showOutput)
+	}
+}
+
+func TestGlobalSetNotInstalled(t *testing.T) {
+	home, project := setupGlobalFixture(t)
+
+	_, err := Run([]string{"global", "ohos@9.9"}, Env{Home: home, Cwd: project})
+	if err == nil {
+		t.Fatal("expected error when setting global to a non-installed version")
+	}
+	if !strings.Contains(err.Error(), "version is not installed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunFlutterFallsBackToGlobal(t *testing.T) {
+	home, project := setupGlobalFixture(t)
+
+	if _, err := Run([]string{"global", "ohos@3.35"}, Env{Home: home, Cwd: project}); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	if _, err := Run([]string{"flutter", "--version"}, Env{Home: home, Cwd: project, Stdout: &stdout, Stderr: &stdout}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "Flutter 3.35.0") {
+		t.Fatalf("expected global flutter execution output, got %s", stdout.String())
+	}
+
+	if _, err := Run([]string{"dart", "--version"}, Env{Home: home, Cwd: project, Stdout: &stdout, Stderr: &stdout}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "fake dart") {
+		t.Fatalf("expected global dart execution output, got %s", stdout.String())
+	}
+
+	if _, err := Run([]string{"global", "--unlink"}, Env{Home: home, Cwd: project}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Run([]string{"flutter", "--version"}, Env{Home: home, Cwd: project, Stdout: &stdout, Stderr: &stdout})
+	if err == nil {
+		t.Fatal("expected error when no project binding and no global version")
+	}
+	if !strings.Contains(err.Error(), "No active Flutter SDK") || !strings.Contains(err.Error(), "fvmx global") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestListShowsGlobalColumn(t *testing.T) {
+	home, project := setupGlobalFixture(t)
+
+	root := filepath.Dir(home)
+	nextSourceRepo := createTaggedSourceRepo(t, filepath.Join(root, "next"), "3.36")
+	if _, err := Run([]string{"repo", "set", "ohos", nextSourceRepo}, Env{Home: home, Cwd: project}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run([]string{"repo", "update", "ohos"}, Env{Home: home, Cwd: project}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run([]string{"install", "ohos", "3.36"}, Env{Home: home, Cwd: project}); err != nil {
+		t.Fatal(err)
+	}
+
+	listOutput, err := Run([]string{"list"}, Env{Home: home, Cwd: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(listOutput, "\n") {
+		if strings.Contains(line, "ohos@") && strings.Contains(line, "*") {
+			t.Fatalf("no version row should be marked before setting a global version: %q", line)
+		}
+	}
+
+	if _, err := Run([]string{"global", "ohos@3.36"}, Env{Home: home, Cwd: project}); err != nil {
+		t.Fatal(err)
+	}
+	listOutput, err = Run([]string{"list"}, Env{Home: home, Cwd: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listOutput, "Global") {
+		t.Fatalf("list output should contain Global column header, got %s", listOutput)
+	}
+	var globalLine, otherLine string
+	for _, line := range strings.Split(listOutput, "\n") {
+		if strings.Contains(line, "ohos@3.36") {
+			globalLine = line
+		}
+		if strings.Contains(line, "ohos@3.35") {
+			otherLine = line
+		}
+	}
+	if globalLine == "" || !strings.Contains(globalLine, "*") {
+		t.Fatalf("global version row should be marked: %q", globalLine)
+	}
+	if otherLine == "" || strings.Contains(otherLine, "*") {
+		t.Fatalf("non-global version row should not be marked: %q", otherLine)
+	}
 }
 

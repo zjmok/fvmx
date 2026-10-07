@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-`fvmx` 是一个用 Go 实现的轻量 Flutter SDK 版本管理 CLI，基于 Git 裸仓库（bare repo）+ worktree 架构实现多版本并行与高效存储。支持多仓库来源（官方 / ohos 等）、版本安装与切换、别名管理、自升级等功能。
+`fvmx` 是一个用 Go 实现的轻量 Flutter SDK 版本管理 CLI，基于 Git 裸仓库（bare repo）+ worktree 架构实现多版本并行与高效存储。支持多仓库来源（官方 / ohos 等）、版本安装与切换、别名管理、全局默认版本、自升级等功能。
 
 ## 技术栈
 
@@ -54,6 +54,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dist/fvmx-linux-arm64 ./cmd/fv
 - 全局目录 `~/.fvmx`（可通过 `FVMX_CACHE_PATH` 覆盖）：
   - `repos/<name>.git` — 裸仓库（共享 Git objects）
   - `versions/<repo>@<ref>` — worktree（每个版本独立 SDK）
+  - `default` — global 默认版本链接（Windows 为 junction），链接本身即持久化存储，不写 config.json
   - `config.json` — 仓库配置 + 别名映射
 - 项目目录：
   - `.fvmxrc` — fvmx 命令读取的配置（`flutter` + 可选 `repo`）
@@ -70,7 +71,8 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dist/fvmx-linux-arm64 ./cmd/fv
 ### 版本查找
 
 - `findInstalledVersion` 先精确匹配目录名，失败后前缀匹配（处理 ref 被规范化的情况）。
-- `list`/`flutter`/`dart` 共用解析逻辑：① `.fvmxrc` 有 `repo`+`flutter` 则精确匹配 ② 仅 `flutter` 则扫描 `versions/` 唯一匹配。
+- `list`/`flutter`/`dart` 共用解析逻辑：① `.fvmxrc` 有 `repo`+`flutter` 则精确匹配 ② 仅 `flutter` 则扫描 `versions/` 唯一匹配 ③ 项目外回退 `fvmx global` 设置的 `default` 链接，仍未设置则报错。
+- `global` 链接指向 `<home>/default`，版本 ID 从链接目标目录名（`<repo>@<label>`）反解；`list` 用 Global 列标记。
 
 ### update 自升级
 

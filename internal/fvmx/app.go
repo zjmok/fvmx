@@ -181,6 +181,8 @@ func Run(args []string, env Env) (string, error) {
 		return removeVersion(env.Home, args[1], env)
 	case "alias":
 		return aliasCommand(env.Home, args[1:])
+	case "global":
+		return globalCommand(env.Home, args[1:], env)
 	case "releases":
 		return releasesCommand(env.Home, args[1:])
 	case "update":
@@ -203,6 +205,7 @@ func usage() string {
   fvmx list
   fvmx use <repo@ref-or-alias>
   fvmx remove <repo@ref-or-alias>
+  fvmx global [<repo@ref-or-alias> | --unlink]
   fvmx alias add <alias> <repo@ref>
   fvmx alias list
   fvmx alias remove <alias>
@@ -805,28 +808,35 @@ func listVersions(home, projectDir string, env Env) (string, error) {
 		sort.Strings(aliasMap[target])
 	}
 
+	globalTarget, hasGlobal := globalSDKPath(home, env)
+
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 0, 3, ' ', 0)
 
 	if current != "" {
 		fmt.Fprintf(tw, "Current project: %s\n", current)
 	}
-	fmt.Fprintln(tw, "   Version\tFlutter\tDart\tAliases")
+	fmt.Fprintln(tw, "   Version\tFlutter\tDart\tGlobal\tAliases")
 	for _, version := range versions {
+		// \x00 是绿色 * 的占位符，flush 后统一替换（避免 tabwriter 计入 ANSI 转义宽度）
 		marker := "  "
 		if version == current {
-			marker = " *"
+			marker = " \x00"
 		}
 		versionPath := filepath.Join(versionsDir(home), version)
 		flutterVer, dartVer := getSDKVersionInfo(versionPath)
+		globalMark := ""
+		if hasGlobal && versionPath == globalTarget {
+			globalMark = "\x00"
+		}
 		aliases := "-"
 		if als, ok := aliasMap[version]; ok && len(als) > 0 {
 			aliases = strings.Join(als, ", ")
 		}
-		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\n", marker, version, flutterVer, dartVer, aliases)
+		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t%s\n", marker, version, flutterVer, dartVer, globalMark, aliases)
 	}
 	tw.Flush()
-	return strings.Replace(buf.String(), " * ", " \033[32m*\033[0m ", 1), nil
+	return strings.ReplaceAll(buf.String(), "\x00", "\033[32m*\033[0m"), nil
 }
 
 // getSDKVersionInfo 获取 SDK 的 Flutter 和 Dart 版本号。
@@ -1062,7 +1072,7 @@ func resolveSDKPath(projectRoot, home string) (string, error) {
 	}
 
 	return "", &ExitError{
-		Message: "No active Flutter SDK. Run fvmx use <repo@ref> in this project first.",
+		Message: "No active Flutter SDK. Run fvmx use <repo@ref> in this project, or set a default with fvmx global <repo@ref>.",
 		Code:    1,
 	}
 }
@@ -1071,15 +1081,22 @@ func resolveSDKPath(projectRoot, home string) (string, error) {
 // 通过 resolveSDKPath 找到 SDK 路径并执行 bin/flutter（或 .bat 版本）。
 func runFlutter(args []string, env Env) error {
 	projectRoot := findProjectRoot(env.Cwd)
+	var sdkPath string
 	if projectRoot == "" {
-		return &ExitError{
-			Message: "No active Flutter SDK. Run fvmx use <repo@ref> in this project first.",
-			Code:    1,
+		// 项目外（无 .fvmxrc）回退到 global 默认版本，仍未设置则报错
+		var ok bool
+		if sdkPath, ok = globalSDKPath(env.Home, env); !ok {
+			return &ExitError{
+				Message: "No active Flutter SDK. Run fvmx use <repo@ref> in this project, or set a default with fvmx global <repo@ref>.",
+				Code:    1,
+			}
 		}
-	}
-	sdkPath, err := resolveSDKPath(projectRoot, env.Home)
-	if err != nil {
-		return err
+	} else {
+		var err error
+		sdkPath, err = resolveSDKPath(projectRoot, env.Home)
+		if err != nil {
+			return err
+		}
 	}
 
 	toolPath, err := flutterExecutable(sdkPath)
@@ -1136,15 +1153,22 @@ func flutterExecutable(sdkPath string) (string, error) {
 // runDart 在项目上下文中执行 dart 命令，与 runFlutter 共享 SDK 解析逻辑
 func runDart(args []string, env Env) error {
 	projectRoot := findProjectRoot(env.Cwd)
+	var sdkPath string
 	if projectRoot == "" {
-		return &ExitError{
-			Message: "No active Flutter SDK. Run fvmx use <repo@ref> in this project first.",
-			Code:    1,
+		// 项目外（无 .fvmxrc）回退到 global 默认版本，仍未设置则报错
+		var ok bool
+		if sdkPath, ok = globalSDKPath(env.Home, env); !ok {
+			return &ExitError{
+				Message: "No active Flutter SDK. Run fvmx use <repo@ref> in this project, or set a default with fvmx global <repo@ref>.",
+				Code:    1,
+			}
 		}
-	}
-	sdkPath, err := resolveSDKPath(projectRoot, env.Home)
-	if err != nil {
-		return err
+	} else {
+		var err error
+		sdkPath, err = resolveSDKPath(projectRoot, env.Home)
+		if err != nil {
+			return err
+		}
 	}
 
 	toolPath, err := dartExecutable(sdkPath)
@@ -1350,6 +1374,115 @@ func aliasRemove(home, alias string) (string, error) {
 	}
 
 	return "Removed alias: " + alias, nil
+}
+
+// globalDefaultLinkPath 返回 global 默认版本的链接路径 <home>/default
+func globalDefaultLinkPath(home string) string {
+	return filepath.Join(home, "default")
+}
+
+// globalSDKPath 返回 global 链接指向的 SDK 路径。
+// 未设置链接、链接不可读或目标缺失时返回 false；悬空链接输出 warning。
+func globalSDKPath(home string, env Env) (string, bool) {
+	linkPath := globalDefaultLinkPath(home)
+	if _, err := os.Lstat(linkPath); err != nil {
+		return "", false
+	}
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		fmt.Fprintf(env.Stdout, "warning: global link is broken: %s\n", linkPath)
+		return "", false
+	}
+	// Windows junction 的目标可能带 `\??\` 前缀，统一去掉
+	target = strings.TrimPrefix(target, `\??\`)
+	if info, err := os.Stat(target); err != nil || !info.IsDir() {
+		fmt.Fprintf(env.Stdout, "warning: global link target is missing: %s\n", target)
+		return "", false
+	}
+	return target, true
+}
+
+// globalCommand 是 global 子命令的调度入口。
+// 无参数显示当前 global 设置；带 <repo@ref-or-alias> 设置 global；--unlink 移除。
+func globalCommand(home string, args []string, env Env) (string, error) {
+	unlink := false
+	positional := []string{}
+	for _, arg := range args {
+		switch {
+		case arg == "--unlink":
+			unlink = true
+		case strings.HasPrefix(arg, "-"):
+			return "", usageError("unknown option for global: " + arg)
+		default:
+			positional = append(positional, arg)
+		}
+	}
+
+	if unlink {
+		if len(positional) != 0 {
+			return "", usageError("global --unlink does not accept a version.")
+		}
+		return globalUnlink(home)
+	}
+	if len(positional) > 1 {
+		return "", usageError("global accepts at most one <repo@ref-or-alias>.")
+	}
+	if len(positional) == 1 {
+		return globalSet(home, positional[0], env)
+	}
+	return globalShow(home, env)
+}
+
+// globalSet 将 <home>/default 链接指向已安装版本，作为全局默认 SDK。
+// 链接本身即持久化存储，不写 config.json；版本 ID 可从链接目标目录名反解。
+func globalSet(home, spec string, env Env) (string, error) {
+	version, err := resolveVersionOrAlias(home, spec)
+	if err != nil {
+		return "", err
+	}
+
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		return "", err
+	}
+	linkPath := globalDefaultLinkPath(home)
+	if err := removeExistingLink(linkPath); err != nil {
+		return "", err
+	}
+	if err := createDirLink(version.Path, linkPath); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf(
+		"Global version set to %s\n%s -> %s\n\nAdd %s to PATH to use it as the default flutter/dart.",
+		version.ID, linkPath, version.Path, filepath.Join(linkPath, "bin"),
+	), nil
+}
+
+// globalShow 输出当前 global 版本。版本 ID 从链接目标目录名反解（<repo>@<label>）
+func globalShow(home string, env Env) (string, error) {
+	target, ok := globalSDKPath(home, env)
+	if !ok {
+		return "No global version is set. Set one with: fvmx global <repo@ref-or-alias>", nil
+	}
+	return fmt.Sprintf(
+		"Global version: %s\n%s -> %s",
+		filepath.Base(target), globalDefaultLinkPath(home), target,
+	), nil
+}
+
+// globalUnlink 删除 global 链接。链接不存在时按未设置处理，不报错
+func globalUnlink(home string) (string, error) {
+	linkPath := globalDefaultLinkPath(home)
+	if _, err := os.Lstat(linkPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "No global version is set.", nil
+		}
+		return "", err
+	}
+	if err := removeExistingLink(linkPath); err != nil {
+		return "", err
+	}
+	return "Global version unlinked.", nil
 }
 
 // releaseEntry 对应 Google Storage releases JSON 中的单条发布记录
