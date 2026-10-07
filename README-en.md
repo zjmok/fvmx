@@ -6,19 +6,34 @@ Language: [简体中文](README.md) | English
 
 ## Capability Comparison
 
+Both tools serve a similar purpose; the differences below are design trade-offs and maturity, stated as factually as possible:
+
 | Capability | fvmx | fvm |
 | --- | --- | --- |
-| Git Storage | ✅ Bare repo + worktree, shared objects, avoids duplicating Git data for every version | ⚠️ Uses a cache repository + SDK directories; Git data is shared, but the layout is heavier |
-| Multi-repo Support | ✅ Repos are first-class, with native support for multiple sources such as `origin` and `ohos` | ⚠️ Supports custom forks / Flutter URLs, but not as a multi-repo namespace |
-| Version Granularity | ✅ Supports commit / branch / tag, distinguished as `<repo>@<ref>` | ✅ Supports versions / tags, and also commit hashes |
-| Install Performance | ✅ Worktrees reuse bare-repo objects and avoid full clones; SDK files still need to be checked out | ⚠️ Uses clone / cache mechanisms; mature, but first installs cost more |
-| Disk Usage (Git) | ✅ Single object store shared by multiple versions | ⚠️ Cache reuse exists, but multiple SDK directories still increase total usage |
-| SDK Isolation | ✅ Isolated worktree + bin/cache per version | ✅ Isolated per version |
-| Project Pinning | ✅ `.fvmx/` + `.fvmxrc` | ✅ `.fvm/` + `.fvmrc` |
-| Command Proxy | ✅ `fvmx flutter` | ✅ `fvm flutter` |
-| Distribution | ✅ Single binary (Go) | ✅ Single binary (compiled Dart) |
-| Cross-platform Stability | ⚠️ More edge cases (especially Windows) | ✅ More mature and stable |
-| Ecosystem | ❌ New tool | ✅ Mature ecosystem |
+| Git Object Reuse | Bare repo + worktrees: all versions share a single object store | Bare git cache + cloned version dirs: objects reused via Git alternates |
+| Multi-source Support | First-class repos with native `<repo>@<ref>` namespacing (official / ohos side by side) | Forks / custom Flutter URLs |
+| Version Granularity | commit / branch / tag | Versions / tags / commit hashes |
+| Project Pinning | `.fvmxrc` + `.fvmx/` (with a `flutter_sdk` link for IDEs / CI) | `.fvmrc` + `.fvm/` |
+| Command Proxy | `fvmx flutter` / `fvmx dart` | `fvm flutter` / `fvm dart` |
+| Global Default Version | ❌ Not yet (global aliases require an explicit `use`) | ✅ `fvm global` |
+| Maturity | New tool; fewer cross-platform edge cases battle-tested | Mature ecosystem, well documented, battle-tested |
+
+### Pros and Cons
+
+**fvmx**
+
+- ✅ Object sharing covers every source: one bare repo per repo, shared even between fork-based versions (measured: two ohos versions share a single 2.0 GB object store; the same setup on fvm costs two independent ~4 GB copies)
+- ✅ Worktree has no indirection layer: objects always live inside the bare repo, per-version Git metadata is only 1–2 MB
+- ✅ Single binary in pure Go standard library, cross-compilable from any platform
+- ⚠️ New tool; ecosystem and cross-platform edge cases are less battle-tested; no global default version yet
+- ⚠️ After moving the cache directory, worktree pointers need `git worktree repair` (same path coupling as fvm, but with an official repair command)
+
+**fvm**
+
+- ✅ Mature community and rich features: global default version, flavors, fork management, doctor, etc.
+- ✅ Its cache mechanism works well for official versions (hardlink mirror clones since 4.1, `--reference` in 4.0.x; measured per-version Git metadata of only 1–20 MB)
+- ⚠️ Fork / custom URL versions do not participate in object sharing — each is a full independent copy (measured ~2 GB each)
+- ⚠️ Legacy issues from mechanism changes: after cache path migration, old versions' `objects/info/alternates` dangle (measured: 2 broken versions needing manual path fixes); repacking inside a version materializes hardlink sharing into independent data
 
 ## Features
 

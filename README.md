@@ -6,19 +6,34 @@
 
 ## 能力对比
 
+两者定位相近，差异主要在机制取舍与成熟度，如实列出：
+
 | 能力 | fvmx | fvm |
 | --- | --- | --- |
-| Git 存储 | ✅ 裸仓库 + worktree，共享 objects，避免为每个版本重复 clone Git 数据 | ⚠️ 使用缓存仓库 + SDK 目录，Git 数据有共享但目录结构更重 |
-| 多 repo 支持 | ✅ repo 是一等概念，原生支持 `origin` / `ohos` 等多个来源 | ⚠️ 支持自定义 fork / Flutter URL，但不是以多 repo 命名空间为核心 |
-| 版本粒度 | ✅ 支持 commit / branch / tag，并以 `<repo>@<ref>` 区分来源 | ✅ 支持版本号 / tag，也支持 commit hash |
-| 安装性能 | ✅ worktree 复用裸仓库 objects，避免完整 clone；仍需 checkout SDK 文件 | ⚠️ 依赖 clone / cache 机制，成熟但首次安装成本更高 |
-| 磁盘占用（Git） | ✅ 单 object store，多版本共享 Git 对象 | ⚠️ 有缓存复用，但多个 SDK 目录仍会带来更高整体占用 |
-| SDK 隔离 | ✅ 每个版本独立 worktree + bin/cache | ✅ 每个版本独立目录 |
-| 项目绑定 | ✅ `.fvmx/` + `.fvmxrc` | ✅ `.fvm/` + `.fvmrc` |
-| 命令转发 | ✅ `fvmx flutter` | ✅ `fvm flutter` |
-| 分发方式 | ✅ 单二进制（Go） | ✅ 单二进制（Dart 编译） |
-| 跨平台稳定性 | ⚠️ worktree 边界较多（尤其 Windows） | ✅ 更成熟稳定 |
-| 生态成熟度 | ❌ 新工具 | ✅ 成熟生态 |
+| Git 对象复用 | 裸仓库 + worktree，所有版本共享同一 object store | 裸缓存 + 版本目录 clone，对象经 Git alternates 复用 |
+| 多来源支持 | repo 为一等概念，`<repo>@<ref>` 原生命名空间（官方 / ohos 等并列管理） | 支持 fork / 自定义 Flutter URL |
+| 版本粒度 | commit / branch / tag | 版本号 / tag / commit hash |
+| 项目绑定 | `.fvmxrc` + `.fvmx/`（含 `flutter_sdk` 链接，供 IDE / CI 直接使用） | `.fvmrc` + `.fvm/` |
+| 命令转发 | `fvmx flutter` / `fvmx dart` | `fvm flutter` / `fvm dart` |
+| 全局默认版本 | ❌ 暂未提供（全局别名需显式 `use`） | ✅ `fvm global` |
+| 成熟度 | 新工具，跨平台边界场景验证较少 | 社区生态成熟，文档完善，久经验证 |
+
+### 优缺点
+
+**fvmx**
+
+- ✅ 对象共享覆盖全部来源：每个 repo 一个裸仓库，fork / 自定义来源的版本之间同样共享（实测：两个 ohos 版本共享同一份 2.0 GB 对象库，fvm 同场景为两份独立副本约 4 GB）
+- ✅ worktree 机制无间接层：对象始终在裸仓库本体内，单版本 Git 元数据仅 1~2 MB
+- ✅ 纯 Go 标准库单二进制，任意平台可交叉编译
+- ⚠️ 新工具，生态与跨平台边界场景验证少；暂无全局默认版本
+- ⚠️ 缓存目录迁移后 worktree 指针需 `git worktree repair` 修复（路径耦合与 fvm 同源，但有官方修复命令）
+
+**fvm**
+
+- ✅ 社区成熟、功能全面：global 默认版本、flavors、fork 管理、doctor 等
+- ✅ 官方版本的缓存机制成熟有效（4.1+ 走硬链接镜像克隆，4.0.x 走 `--reference`，实测单版本 Git 元数据仅 1~20 MB）
+- ⚠️ fork / 自定义 URL 版本不参与对象共享，每个版本是全量独立副本（实测约 2 GB/个）
+- ⚠️ 机制更迭遗留隐患：缓存路径迁移后旧版本 `objects/info/alternates` 悬空（实测 2 个版本因此损坏，需手动改路径修复）；版本内 repack 会把硬链接共享物化为独立数据
 
 ## 功能
 
