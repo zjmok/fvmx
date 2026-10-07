@@ -11,8 +11,10 @@ import (
 var version = "dev"
 
 func main() {
-	for _, arg := range os.Args[1:] {
-		if arg == "--version" || arg == "-v" {
+	// 仅当 --version/-v 是第一个参数时才打印自身版本，
+	// 否则 `fvmx flutter --version` 会被拦截而无法转发到 SDK
+	if len(os.Args) > 1 {
+		if arg := os.Args[1]; arg == "--version" || arg == "-v" {
 			fmt.Println(version)
 			return
 		}

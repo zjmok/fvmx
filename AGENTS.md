@@ -14,7 +14,7 @@
 ## 项目结构
 
 ```
-cmd/fvmx/main.go          # 入口，解析 --version/-v，调用 fvmx.Run()
+cmd/fvmx/main.go          # 入口，仅首参数为 --version/-v 时打印自身版本，其余调用 fvmx.Run()
 internal/fvmx/app.go      # 核心逻辑：所有子命令实现、配置读写、Git 操作
 internal/fvmx/update.go   # update 命令：GitHub API 查询、下载、校验、自替换
 internal/fvmx/presets.json # 内嵌预设仓库（origin、ohos）
